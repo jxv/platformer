@@ -1,0 +1,210 @@
+module Platformer.Util where
+
+import qualified Data.Map as M
+import qualified Data.List as L
+import Platformer.Imports
+import Platformer.Types
+import Platformer.Class
+import Platformer.Math
+import Safe
+
+import Debug.Trace (traceShowId)
+
+isIntersect :: Aabb -> Aabb -> Bool
+isIntersect (Aabb (V2 al au) (V2 ar ad)) (Aabb (V2 bl bu) (V2 br bd)) = ar >= bl && al <= br && ad >= bu && au <= bd
+{-# INLINE isIntersect #-}
+
+isInside :: V2 Float -> Aabb -> Bool
+isInside (V2 x y) = isIntersect (Aabb (V2 x y) (V2 x y))
+{-# INLINE isInside #-}
+
+bodyToBody :: Body -> Body -> Maybe (V2 Float, Float)
+bodyToBody a b = let
+    n, overlap :: V2 Float
+    n = b^.bPosition - a^.bPosition
+    overlap = a^.bRadii + b^.bRadii - abs n
+    in if not $ isIntersect (toAabb a) (toAabb b)
+        then Nothing
+        else Just $
+            if abs (overlap^._x) > abs (overlap^._y)
+            then (if n^._x < 0 then V2 (-1) 0 else V2 1 0, overlap^._x)
+            else (if n^._y < 0 then V2 0 (-1) else V2 0 1, overlap^._y)
+{-# INLINE bodyToBody #-}
+
+solveCollision :: (Int, Body) -> (Int, Body) -> Maybe Manifold
+solveCollision (akey,a) (bkey,b) = do
+    (nrm, pen) <- bodyToBody a b
+    return $ Manifold {
+            _mfNormal = nrm,
+            _mfPenetration = pen,
+            _mfAKey = akey,
+            _mfBKey = bkey,
+            _mfE = a^.bRestitution * b^.bRestitution,
+            _mfDynamicFriction = a^.bDynamicFriction * b^.bDynamicFriction,
+            _mfStaticFriction = a^.bStaticFriction * b^.bStaticFriction
+        }
+
+integrateForce :: Float -> V2 Float -> Body -> Body
+integrateForce dt gravity b@Body{..} = let
+    vel = (_bForce ^* _bInverseMass + gravity) ^* (dt / 2)
+    in b & if _bInverseMass == 0 then id else bVelocity +~ vel
+
+integrateVelocity :: Float -> V2 Float -> Body -> Body
+integrateVelocity dt gravity b@Body{..} = let
+    pos = _bVelocity ^* dt
+    b' = b & bPosition +~ pos
+    in if _bInverseMass == 0 then b else integrateForce dt gravity b'
+
+stepper :: World -> World
+stepper
+    = clearForces
+    . clearManifolds
+    . correctPositions
+    . integrateVelocities
+    . solveCollisions
+    . initializeCollisions
+    . integrateForces
+    . genCollisionInfo
+
+genCollisionInfo :: World -> World
+genCollisionInfo w@World{..} = w & wManifolds .~ mfs
+ where
+    list = M.toList _wBodies
+    mfs = catMaybes [
+            solveCollision aPair bPair |
+            (aPair,bodies) <- zip list (tail $ L.tails list),
+            bPair <- bodies,
+            (snd aPair)^.bInverseMass /= 0 || (snd bPair)^.bInverseMass /= 0
+        ]
+
+integrateForces :: World -> World
+integrateForces w@World{..} = w & wBodies %~ (M.map (integrateForce _wDeltaTime _wGravity))
+
+initializeCollisions :: World -> World
+initializeCollisions w@World{..} = w & wManifolds %~ (map step)
+ where
+    step m@Manifold{..} = manifoldInitialize _wGravity _wDeltaTime _mfAKey (_wBodies M.! _mfAKey) _mfBKey (_wBodies M.! _mfBKey) m
+    manifoldInitialize g dt akey a bkey b m = let
+        e = mfE .~ (a^.bRestitution * b^.bRestitution)
+        sf = mfStaticFriction .~ (a^.bStaticFriction * b^.bStaticFriction)
+        df = mfDynamicFriction .~ (a^.bDynamicFriction * b^.bDynamicFriction)
+        in m & e . sf . df
+
+solveCollisions :: World -> World
+solveCollisions w = (iterate stepper w) !! (w^.wIterations)
+ where
+    stepper v = v & wBodies .~ (foldl step (v^.wBodies) (v^.wManifolds))
+    step bodies m = let
+        (akey,bkey) = (m^.mfAKey, m^.mfBKey)
+        (a,b) = manifoldApplyImpulse (bodies M.! akey) (bodies M.! bkey) m
+        in M.insert akey a $ M.insert bkey b $ bodies
+
+integrateVelocities :: World -> World
+integrateVelocities w@World{..} = w & wBodies %~ M.map (integrateVelocity _wDeltaTime _wGravity)
+
+correctPositions :: World -> World
+correctPositions w = w & wBodies .~ (foldl step (w^.wBodies) (w^.wManifolds))
+ where
+    step bodies m = let
+        (akey,bkey) = (m^.mfAKey, m^.mfBKey)
+        (a,b) = positionalCorrection (bodies M.! akey) (bodies M.! bkey) m
+        in M.insert akey a $ M.insert bkey b $ bodies
+    positionalCorrection a b Manifold{..} = let
+        percent = 0.4 -- usually 0.2 to 0.8
+        slop = 0.07 -- usually 0.01 to 0.1 (to stop jitters)
+        correction = ((max 0 (_mfPenetration - slop)) / (a^.inverseMass + b^.inverseMass)) * percent *^ _mfNormal
+        a' = a & bPosition -~ (a^.inverseMass *^ correction)
+        b' = b & bPosition +~ (b^.inverseMass *^ correction)
+        in (a',b')
+
+onDynamic :: Body -> (Body -> Body) -> Body
+onDynamic a f = (if a^.bType == Dynamic then f else id) a
+
+clearForces :: World -> World
+clearForces = wBodies %~ M.map (bForce .~ zero)
+
+clearManifolds :: World -> World
+clearManifolds = wManifolds .~ []
+
+addBody :: Body -> World ->(Int, World)
+addBody a w = let
+    key = head (w^.wUnusedBodyKeys)
+    w' = w & (wBodies %~ M.insert key a) . (wUnusedBodyKeys %~ tail)
+    in (key, w')
+
+addBody' :: Body -> World -> World
+addBody' a w = let
+    key = head (w^.wUnusedBodyKeys)
+    in w & (wBodies %~ M.insert key a) . (wUnusedBodyKeys %~ tail)
+
+addBodyMay :: Body -> World -> Maybe (Int, World)
+addBodyMay a w = do
+    key <- headMay (w^.wUnusedBodyKeys)
+    let w' = w & (wBodies %~ M.insert key a) . (wUnusedBodyKeys %~ tail)
+    return (key, w')
+
+deleteBody :: Int -> World -> World
+deleteBody key = (wBodies %~ M.delete key) . (wUnusedBodyKeys %~ (key:))
+
+manifoldApplyImpulse :: Body -> Body -> Manifold -> (Body, Body)
+manifoldApplyImpulse a b m = let
+    rv = b^.bVelocity - a^.bVelocity
+    contactVel = dot rv (m^.mfNormal)
+    e = min (a^.bRestitution) (b^.bRestitution)
+    invMassSum = a^.bInverseMass + b^.bInverseMass
+    j = ((negate $ 1 + e) * contactVel) / invMassSum
+    impulse = j *^ m^.mfNormal
+    a' = a & (bVelocity -~ (a^.bInverseMass *^ impulse))
+    b' = b & (bVelocity +~ (b^.bInverseMass *^ impulse))
+    --
+    rv' = b'^.bVelocity - a'^.bVelocity
+    t = normalize $ rv' - (m^.mfNormal) ^* dot rv' (m^.mfNormal)
+    jt = (negate $ dot rv' t) / invMassSum
+    tagImpulse = if abs jt < j * (m^.mfStaticFriction)
+        then t ^* jt
+        else t ^* ((-j) * (m^.mfDynamicFriction))
+    a'' = a' & (bVelocity -~ (a'^.bInverseMass *^ tagImpulse))
+    b'' = b' & (bVelocity +~ (b'^.bInverseMass *^ tagImpulse))
+    in if 
+        | nearZero invMassSum -> (a & bVelocity .~ zero, b & bVelocity .~ zero)
+        | contactVel > 0 -> (a,b)
+        | nearZero jt -> (a',b')
+        | otherwise -> (a'',b'')
+    -- TODO: friction
+
+newWorld :: Int -> World
+newWorld maxBodies = World {
+    _wBodies = M.empty,
+    _wManifolds = [],
+    _wUnusedBodyKeys = [0..maxBodies - 1],
+    _wGravity = V2 0 9.8,
+    _wDeltaTime = 1 / 60,
+    _wIterations = 10
+}
+
+newBody :: Body
+newBody = set mass 1 $ Body {
+    _bType = Dynamic,
+    _bRadii = zero,
+    _bPosition = zero,
+    _bVelocity = zero,
+    _bForce = zero,
+    _bMass = 0,
+    _bInverseMass = 0,
+    _bStaticFriction = 0,
+    _bDynamicFriction = 0,
+    _bRestitution = 0
+}
+
+mass :: Lens' Body Float
+mass = interrelateInv bMass bInverseMass
+
+inverseMass :: Lens' Body Float
+inverseMass = interrelateInv bInverseMass bMass
+
+interrelateInv :: Lens' a Float -> Lens' a Float -> Lens' a Float
+interrelateInv a b = lens (^.a) (\x y -> x & (a .~ y) . (b .~ recipNoInf y))
+
+-- Pontentially splits bodies in a world
+destroyBodiesByArea :: Aabb -> World -> (World, [Body])
+destroyBodiesByArea = undefined
