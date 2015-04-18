@@ -43,15 +43,14 @@ instance HasControl Demo where
 
 mkBodies :: [Body]
 mkBodies = [
-        newBody & (bRadii .~ V2 3 4) . (bPosition .~ V2 20 0) . friction,
-{-
-        newBody & (bRadii .~ V2 3 4) . (bPosition .~ V2 30 0),
-        newBody & (bRadii .~ V2 3 4) . (bPosition .~ V2 35 0),
-        newBody & (bRadii .~ V2 6 2) . (bPosition .~ V2 45 0),
--}
-        newBody & (bRadii .~ V2 30 0.5) . (bPosition .~ V2 34 34) . (mass .~ 0) . friction
+        newBody & (bRadii .~ V2 3 4) . (bPosition .~ V2 25 0) . friction,
+        newBody & (bRadii .~ V2 3 4) . (bPosition .~ V2 30 0) . friction,
+        newBody & (bRadii .~ V2 3 4) . (bPosition .~ V2 30 0) . friction,
+        newBody & (bRadii .~ V2 6 2) . (bPosition .~ V2 45 0) . friction,
+        newBody & (bRadii .~ V2 30 0.5) . (bPosition .~ V2 34 34) . (mass .~ 0) . friction,
+        newBody & (bRadii .~ V2 10 0.5) . (bPosition .~ V2 13 20) . (mass .~ 0) . friction
     ]
- where friction = (bDynamicFriction .~ 0.8) . (bStaticFriction .~ 0.8) . (bRestitution .~ 0.5)
+ where friction = (bDynamicFriction .~ 0.8) . (bStaticFriction .~ 0.2) . (bRestitution .~ 0.1)
 
 mkWorld :: World
 mkWorld = foldr addBody' (newWorld 1024) mkBodies

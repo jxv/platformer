@@ -26,7 +26,7 @@ bodyToBody a b = let
     in if not $ isIntersect (toAabb a) (toAabb b)
         then Nothing
         else Just $
-            if abs (overlap^._x) > abs (overlap^._y)
+            if abs (overlap^._x) < abs (overlap^._y)
             then (if n^._x < 0 then V2 (-1) 0 else V2 1 0, overlap^._x)
             else (if n^._y < 0 then V2 0 (-1) else V2 0 1, overlap^._y)
 {-# INLINE bodyToBody #-}
