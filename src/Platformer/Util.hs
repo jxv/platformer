@@ -31,20 +31,22 @@ rectToRect a b = let
             else (if n^._y < 0 then V2 0 (-1) else V2 0 1, overlap^._y)
 {-# INLINE rectToRect #-}
 
+sqlen :: V2 Float -> Float
+sqlen (V2 x y) = x^2 + y^2
+{-# INLINE sqlen #-}
+
 circleToCircle :: Body Circle -> Body Circle -> Maybe (V2 Float, Float)
 circleToCircle a b = let
-    n :: V2 Float
-    n = a^.bPosition - b^.bPosition
-    d :: Float
-    d = norm n
-    rad2 :: Float
-    rad2 = (a^.cRadius + b^.cRadius) ^ (2 :: Int)
-    in if dot n n >= rad2
+    normal = b^.bPosition - a^.bPosition
+    distSqr = sqlen normal
+    dist = sqrt distSqr
+    radius = a^.cRadius + b^.cRadius
+    in if distSqr >= radius * radius
         then Nothing
         else Just $
-            if d /= 0
-            then (V2 (n^._x / d) (n^._y / d), rad2 - d)
-            else (V2 1 0, a^.cRadius)
+            if dist == 0
+            then (V2 1 0, a^.cRadius)
+            else (normal ^/ dist, radius - dist)
 {-# INLINE circleToCircle #-}
 
 clamp :: (Applicative f, Ord a) => f a -> f a -> f a -> f a
@@ -243,7 +245,6 @@ manifoldApplyImpulse a b m = let
         | contactVel > 0 -> (a,b)
         | nearZero jt -> (a',b')
         | otherwise -> (a'',b'')
-    -- TODO: friction
 
 newWorld :: Int -> World
 newWorld maxBodies = World {

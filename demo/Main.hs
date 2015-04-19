@@ -47,11 +47,14 @@ instance HasWorld Demo where
 instance HasControl Demo where
     control = demoControl
 
+friction = (bDynamicFriction .~ 0.5) . (bStaticFriction .~ 0.5) . (bRestitution .~ 0.1)
+
 mkBodies :: [Body Shape]
 mkBodies = [
---        newCircle 3 & (bPosition .~ V2 25 (-20)),
-        newCircle 3 & (bPosition .~ V2 25 (-10)),
-        newRect (V2 3 4) & (bPosition .~ V2 30 (-10)),
+        newCircle 3 & (bPosition .~ V2 25 (-25)) . friction,
+--        newCircle 3 & (bPosition .~ V2 25 (-15)) . friction,
+        newCircle 3 & (bPosition .~ V2 20 0) . friction,
+        newRect (V2 3 4) & (bPosition .~ V2 30 (-10)) . (mass .~ 10),
         newRect (V2 3 4) & (bPosition .~ V2 30 0),
         newRect (V2 3 4) & (bPosition .~ V2 30 0),
         newRect (V2 6 2) & (bPosition .~ V2 45 0),
