@@ -47,14 +47,12 @@ instance HasWorld Demo where
 instance HasControl Demo where
     control = demoControl
 
-friction = (bDynamicFriction .~ 0.5) . (bStaticFriction .~ 0.5) . (bRestitution .~ 0.1)
-
 mkBodies :: [Body Shape]
 mkBodies = [
-        newCircle 3 & (bPosition .~ V2 25 (-25)) . friction,
---        newCircle 3 & (bPosition .~ V2 25 (-15)) . friction,
-        newCircle 3 & (bPosition .~ V2 20 0) . friction,
-        newRect (V2 3 4) & (bPosition .~ V2 30 (-10)) . (mass .~ 10),
+        newCircle 3 & (bPosition .~ V2 25 (-20)),
+        newCircle 3 & (bPosition .~ V2 25 (-10)),
+        newCircle 3 & (bPosition .~ V2 10 17.5) . (mass .~ 10) . (bVelocity .~ V2 9.8 0),
+        newRect (V2 3 4) & (bPosition .~ V2 30 (-10)),
         newRect (V2 3 4) & (bPosition .~ V2 30 0),
         newRect (V2 3 4) & (bPosition .~ V2 30 0),
         newRect (V2 6 2) & (bPosition .~ V2 45 0),
@@ -158,7 +156,6 @@ mainLoop d = do
     let c = readInput (fmap eventPayload events) (d^.control)
     let d' = d & world %~ stepper
     renderDemo d'
---    print $ d^.wManifolds
     endTick <- ticks
     delay (delayTime 16 startTick endTick)
     unless (c^.ctrlQuit) (mainLoop d')

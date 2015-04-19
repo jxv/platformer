@@ -62,15 +62,11 @@ rectToCircle a b = let
     outD = b^.bPosition^._y > a^.bPosition^._x + a^.rRadii^._y
     in if (outL || outR) && (outU || outD)
         -- Circle may hit a rect's corner.
-        -- Treat as circle-to-circle collision.
+        -- Treat as circle/point-to-circle collision.
         then let
-{-
-            cir = Circle (b^.cRadius)
-            c = a & toCorner (if outL then (-~) else (+~)) (if outU then (-~) else (+~))
-            diff = a^.rRadii - (pure . sqrt $ b^.cRadius / 2)
-            toCorner x y = bPosition %~ (_x `x` (diff^._x)) . (_y `y` (diff^._y))
--}
-            in Nothing  -- circleToCircle (cir <$ c) b
+            toCorner x y = bPosition %~ (_x `x` (a^.rRadii^._x)) . (_y `y` (a^.rRadii^._y))
+            cornered = a & toCorner (if outL then (-~) else (+~)) (if outU then (-~) else (+~))
+            in circleToCircle (Circle 0 <$ cornered) b
         -- Circle may hit a rect's face.
         -- Treat as rect-to-rect collision.
         else rectToRect a $ Rect (pure $ b^.cRadius) <$ b
@@ -186,7 +182,7 @@ correctPositions w = w & wBodies .~ (foldl step (w^.wBodies) (w^.wManifolds))
         in M.insert akey a $ M.insert bkey b $ bodies
     positionalCorrection a b Manifold{..} = let
         percent = 0.4 -- usually 0.2 to 0.8
-        slop = 0.07 -- usually 0.01 to 0.1 (to stop jitters)
+        slop = 0.05 -- usually 0.01 to 0.1 (to stop jitters)
         correction = ((max 0 (_mfPenetration - slop)) / (a^.inverseMass + b^.inverseMass)) * percent *^ _mfNormal
         a' = a & bPosition -~ (a^.inverseMass *^ correction)
         b' = b & bPosition +~ (b^.inverseMass *^ correction)
@@ -285,6 +281,20 @@ inverseMass = interrelateInv bInverseMass bMass
 interrelateInv :: Lens' a Float -> Lens' a Float -> Lens' a Float
 interrelateInv a b = lens (^.a) (\x y -> x & (a .~ y) . (b .~ recipNoInf y))
 
+massFromDensity :: Float -> Shape -> Float
+massFromDensity density (ShapeRect r) = density * 4 * r^.rRadii^._x * r^.rRadii^._y
+massFromDensity density (ShapeCircle c) = density * pi * (c^.cRadius)^2 
+
 -- Pontentially splits bodies in a world
 destroyBodiesByArea :: Aabb -> World -> (World, [Body a])
 destroyBodiesByArea = undefined
+
+{-
+Rock       Density : 0.6  Restitution : 0.1
+Wood       Density : 0.3  Restitution : 0.2
+Metal      Density : 1.2  Restitution : 0.05
+BouncyBall Density : 0.3  Restitution : 0.8
+SuperBall  Density : 0.3  Restitution : 0.95
+Pillow     Density : 0.1  Restitution : 0.2
+Static     Density : 0.0  Restitution : 0.4
+-}
