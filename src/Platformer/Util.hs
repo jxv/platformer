@@ -18,38 +18,111 @@ isInside :: V2 Float -> Aabb -> Bool
 isInside (V2 x y) = isIntersect (Aabb (V2 x y) (V2 x y))
 {-# INLINE isInside #-}
 
-bodyToBody :: Body -> Body -> Maybe (V2 Float, Float)
-bodyToBody a b = let
+rectToRect :: Body Rect -> Body Rect -> Maybe (V2 Float, Float)
+rectToRect a b = let
     n, overlap :: V2 Float
     n = b^.bPosition - a^.bPosition
-    overlap = a^.bRadii + b^.bRadii - abs n
+    overlap = a^.rRadii + b^.rRadii - abs n
     in if not $ isIntersect (toAabb a) (toAabb b)
         then Nothing
         else Just $
             if abs (overlap^._x) < abs (overlap^._y)
             then (if n^._x < 0 then V2 (-1) 0 else V2 1 0, overlap^._x)
             else (if n^._y < 0 then V2 0 (-1) else V2 0 1, overlap^._y)
+{-# INLINE rectToRect #-}
+
+circleToCircle :: Body Circle -> Body Circle -> Maybe (V2 Float, Float)
+circleToCircle a b = let
+    n :: V2 Float
+    n = a^.bPosition - b^.bPosition
+    d :: Float
+    d = norm n
+    rad2 :: Float
+    rad2 = (a^.cRadius + b^.cRadius) ^ (2 :: Int)
+    in if dot n n >= rad2
+        then Nothing
+        else Just $
+            if d /= 0
+            then (V2 (n^._x / d) (n^._y / d), rad2 - d)
+            else (V2 1 0, a^.cRadius)
+{-# INLINE circleToCircle #-}
+
+clamp :: (Applicative f, Ord a) => f a -> f a -> f a -> f a
+clamp low high n = max <$> low <*> (min <$> high <*> n)
+--clamp (V2 lx ly) (V2 hx hy) (V2 nx ny) = V2 (min hx $ max lx nx) (min hy $ max ly ny)
+{-# INLINE clamp #-}
+
+rectToCircle :: Body Rect -> Body Circle -> Maybe (V2 Float, Float)
+rectToCircle a b = let
+    outL = b^.bPosition^._x < a^.bPosition^._x - a^.rRadii^._x
+    outR = b^.bPosition^._x > a^.bPosition^._x + a^.rRadii^._x
+    outU = b^.bPosition^._y < a^.bPosition^._y - a^.rRadii^._y
+    outD = b^.bPosition^._y > a^.bPosition^._x + a^.rRadii^._y
+    in if (outL || outR) && (outU || outD)
+        -- Circle may hit a rect's corner.
+        -- Treat as circle-to-circle collision.
+        then let
+{-
+            cir = Circle (b^.cRadius)
+            c = a & toCorner (if outL then (-~) else (+~)) (if outU then (-~) else (+~))
+            diff = a^.rRadii - (pure . sqrt $ b^.cRadius / 2)
+            toCorner x y = bPosition %~ (_x `x` (diff^._x)) . (_y `y` (diff^._y))
+-}
+            in Nothing  -- circleToCircle (cir <$ c) b
+        -- Circle may hit a rect's face.
+        -- Treat as rect-to-rect collision.
+        else rectToRect a $ Rect (pure $ b^.cRadius) <$ b
+{-# INLINE rectToCircle #-}
+
+{-
+rectToCircle :: Body Rect -> Body Circle -> Maybe (V2 Float, Float)
+rectToCircle a b = let
+    inside = (b^.bPosition) `isInside` (toAabb a)
+    n = b^.bPosition - a^.bPosition
+    closest = clamp (negate $ a^.rRadii) (a^.rRadii) n
+    closest' =
+        if nearZero (n - closest)
+        then if abs (n^._x) > abs (n^._y)
+            then closest & _x .~ (if closest^._x > 0 then (a^.rRadii^._x) else (-a^.rRadii^._x))
+            else closest & _y .~ (if closest^._y > 0 then (a^.rRadii^._y) else (-a^.rRadii^._y))
+        else closest
+    normal = n - closest'
+    d = dot normal normal
+    r = b^.cRadius
+    in if not inside && d > r ^ 2
+        then Nothing
+        else Just $ (if inside then -n else n, r + sqrt d) 
+{-# INLINE rectToCircle #-}
+-}
+
+bodyToBody :: Body Shape -> Body Shape -> Maybe (V2 Float, Float)
+bodyToBody a b = b2b a b
+ where
+    b2b a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeRect rb} = rectToRect (ra <$ a) (rb <$ b)
+    b2b a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeCircle cb} = rectToCircle (ra <$ a) (cb <$ b)
+    b2b a@Body{_bShape = ShapeCircle ca} b@Body{_bShape = ShapeCircle cb} = circleToCircle (ca <$ a) (cb <$ b)
+    b2b a b = (_1 %~ negate) <$> b2b b a
 {-# INLINE bodyToBody #-}
 
-solveCollision :: (Int, Body) -> (Int, Body) -> Maybe Manifold
+solveCollision :: (Int, Body Shape) -> (Int, Body Shape) -> Maybe Manifold
 solveCollision (akey,a) (bkey,b) = do
     (nrm, pen) <- bodyToBody a b
     return $ Manifold {
-            _mfNormal = nrm,
-            _mfPenetration = pen,
-            _mfAKey = akey,
-            _mfBKey = bkey,
-            _mfE = a^.bRestitution * b^.bRestitution,
-            _mfDynamicFriction = a^.bDynamicFriction * b^.bDynamicFriction,
-            _mfStaticFriction = a^.bStaticFriction * b^.bStaticFriction
-        }
+        _mfNormal = nrm,
+        _mfPenetration = pen,
+        _mfAKey = akey,
+        _mfBKey = bkey,
+        _mfE = a^.bRestitution * b^.bRestitution,
+        _mfDynamicFriction = a^.bDynamicFriction * b^.bDynamicFriction,
+        _mfStaticFriction = a^.bStaticFriction * b^.bStaticFriction
+    }
 
-integrateForce :: Float -> V2 Float -> Body -> Body
+integrateForce :: Float -> V2 Float -> Body Shape -> Body Shape
 integrateForce dt gravity b@Body{..} = let
     vel = (_bForce ^* _bInverseMass + gravity) ^* (dt / 2)
     in b & if _bInverseMass == 0 then id else bVelocity +~ vel
 
-integrateVelocity :: Float -> V2 Float -> Body -> Body
+integrateVelocity :: Float -> V2 Float -> Body Shape -> Body Shape
 integrateVelocity dt gravity b@Body{..} = let
     pos = _bVelocity ^* dt
     b' = b & bPosition +~ pos
@@ -117,7 +190,7 @@ correctPositions w = w & wBodies .~ (foldl step (w^.wBodies) (w^.wManifolds))
         b' = b & bPosition +~ (b^.inverseMass *^ correction)
         in (a',b')
 
-onDynamic :: Body -> (Body -> Body) -> Body
+onDynamic :: Body Shape -> (Body Shape -> Body Shape) -> Body Shape
 onDynamic a f = (if a^.bType == Dynamic then f else id) a
 
 clearForces :: World -> World
@@ -126,18 +199,18 @@ clearForces = wBodies %~ M.map (bForce .~ zero)
 clearManifolds :: World -> World
 clearManifolds = wManifolds .~ []
 
-addBody :: Body -> World ->(Int, World)
+addBody :: Body Shape -> World -> (Int, World)
 addBody a w = let
     key = head (w^.wUnusedBodyKeys)
     w' = w & (wBodies %~ M.insert key a) . (wUnusedBodyKeys %~ tail)
     in (key, w')
 
-addBody' :: Body -> World -> World
+addBody' :: Body Shape -> World -> World
 addBody' a w = let
     key = head (w^.wUnusedBodyKeys)
     in w & (wBodies %~ M.insert key a) . (wUnusedBodyKeys %~ tail)
 
-addBodyMay :: Body -> World -> Maybe (Int, World)
+addBodyMay :: Body Shape -> World -> Maybe (Int, World)
 addBodyMay a w = do
     key <- headMay (w^.wUnusedBodyKeys)
     let w' = w & (wBodies %~ M.insert key a) . (wUnusedBodyKeys %~ tail)
@@ -146,7 +219,7 @@ addBodyMay a w = do
 deleteBody :: Int -> World -> World
 deleteBody key = (wBodies %~ M.delete key) . (wUnusedBodyKeys %~ (key:))
 
-manifoldApplyImpulse :: Body -> Body -> Manifold -> (Body, Body)
+manifoldApplyImpulse :: Body Shape -> Body Shape -> Manifold -> (Body Shape, Body Shape)
 manifoldApplyImpulse a b m = let
     rv = b^.bVelocity - a^.bVelocity
     contactVel = dot rv (m^.mfNormal)
@@ -182,29 +255,35 @@ newWorld maxBodies = World {
     _wIterations = 10
 }
 
-newBody :: Body
-newBody = set mass 1 $ Body {
+newBody :: ToShape a => a -> Body Shape
+newBody a = Body {
     _bType = Dynamic,
-    _bRadii = zero,
+    _bShape = toShape a,
     _bPosition = zero,
     _bVelocity = zero,
     _bForce = zero,
-    _bMass = 0,
-    _bInverseMass = 0,
-    _bStaticFriction = 0,
-    _bDynamicFriction = 0,
-    _bRestitution = 0
+    _bMass = 1,
+    _bInverseMass = 1,
+    _bStaticFriction = 0.5,
+    _bDynamicFriction = 0.5,
+    _bRestitution = 0.5
 }
 
-mass :: Lens' Body Float
+newRect :: V2 Float -> Body Shape
+newRect radii = newBody (Rect radii)
+
+newCircle :: Float -> Body Shape
+newCircle radius = newBody (Circle radius)
+
+mass :: Lens' (Body a) Float
 mass = interrelateInv bMass bInverseMass
 
-inverseMass :: Lens' Body Float
+inverseMass :: Lens' (Body a) Float
 inverseMass = interrelateInv bInverseMass bMass
 
 interrelateInv :: Lens' a Float -> Lens' a Float -> Lens' a Float
 interrelateInv a b = lens (^.a) (\x y -> x & (a .~ y) . (b .~ recipNoInf y))
 
 -- Pontentially splits bodies in a world
-destroyBodiesByArea :: Aabb -> World -> (World, [Body])
+destroyBodiesByArea :: Aabb -> World -> (World, [Body a])
 destroyBodiesByArea = undefined

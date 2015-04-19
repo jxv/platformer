@@ -1,6 +1,9 @@
+{-# LANGUAGE FlexibleInstances #-}
 module Main where
 
 import qualified Data.Map as M
+import qualified Data.Vector.Storable as VS
+import Control.Applicative
 import Control.Monad
 import Control.Lens
 import Linear
@@ -27,7 +30,7 @@ data Control = Control {
 } deriving (Show, Eq)
 
 data Graphic = Graphic {
-    _gRect :: Rectangle CInt,
+    _gPoints :: VS.Vector (Point V2 CInt),
     _gColor :: V4 Word8
 }
 
@@ -35,22 +38,26 @@ makeClassy ''Demo
 makeClassy ''Control
 makeClassy ''Graphic
 
+class ToGraphic a where
+    toGraphic :: a -> Graphic
+
 instance HasWorld Demo where
     world = demoWorld
 
 instance HasControl Demo where
     control = demoControl
 
-mkBodies :: [Body]
+mkBodies :: [Body Shape]
 mkBodies = [
-        newBody & (bRadii .~ V2 3 4) . (bPosition .~ V2 25 0) . friction,
-        newBody & (bRadii .~ V2 3 4) . (bPosition .~ V2 30 0) . friction,
-        newBody & (bRadii .~ V2 3 4) . (bPosition .~ V2 30 0) . friction,
-        newBody & (bRadii .~ V2 6 2) . (bPosition .~ V2 45 0) . friction,
-        newBody & (bRadii .~ V2 30 0.5) . (bPosition .~ V2 34 34) . (mass .~ 0) . friction,
-        newBody & (bRadii .~ V2 10 0.5) . (bPosition .~ V2 13 20) . (mass .~ 0) . friction
+--        newCircle 3 & (bPosition .~ V2 25 (-20)),
+        newCircle 3 & (bPosition .~ V2 25 (-10)),
+        newRect (V2 3 4) & (bPosition .~ V2 30 (-10)),
+        newRect (V2 3 4) & (bPosition .~ V2 30 0),
+        newRect (V2 3 4) & (bPosition .~ V2 30 0),
+        newRect (V2 6 2) & (bPosition .~ V2 45 0),
+        newRect (V2 30 0.5) & (bPosition .~ V2 34 34) . (mass .~ 0),
+        newRect (V2 10 0.5) & (bPosition .~ V2 13 20) . (mass .~ 0)
     ]
- where friction = (bDynamicFriction .~ 0.8) . (bStaticFriction .~ 0.2) . (bRestitution .~ 0.1)
 
 mkWorld :: World
 mkWorld = foldr addBody' (newWorld 1024) mkBodies
@@ -105,20 +112,41 @@ renderDemo :: Demo -> IO ()
 renderDemo d = do
     setRenderDrawColor ren (V4 0x00 0x00 0x00 0xff) 
     renderClear ren
-    mapM_ (renderGraphic ren . toGraphic maxBound) (d^.wBodies)
+    mapM_ (renderGraphic ren . toGraphic) (d^.wBodies)
     renderPresent ren
  where
     ren = d^.demoRenderer
 
-toGraphic :: V4 Word8 -> Body -> Graphic
-toGraphic color a = let
-    rect = fmap (round . (*10)) $ Rectangle (P (a^.bPosition - a^.bRadii)) (a^.bRadii * 2)
-    in Graphic rect color 
+instance ToGraphic (Body Shape) where
+    toGraphic a@Body{_bShape = ShapeRect r} = toGraphic (r <$ a)
+    toGraphic a@Body{_bShape = ShapeCircle c} = toGraphic (c <$ a)
+
+instance ToGraphic (Body Rect) where
+    toGraphic a = let
+        Aabb{..} = toAabb a
+        pts  = VS.fromListN 5 $ map (P . fmap round . (*10)) [
+                _aMin,
+                V2 (_aMin^._x) (_aMax^._y),
+                _aMax,
+                V2 (_aMax^._x) (_aMin^._y),
+                _aMin
+            ]
+        in Graphic pts maxBound
+
+instance ToGraphic (Body Circle) where
+    toGraphic a = let
+        tau = 2 * pi
+        cen = fmap round (a^.bPosition)
+        segs = 25
+        angles = fmap (\i -> fromIntegral i * tau / fromIntegral (segs - 1)) [0..(segs - 1)]
+        cons theta = P $ fmap (round . (*10)) ((a^.bPosition) + V2 (cos theta * (a^.cRadius)) (sin theta * (a^.cRadius)))
+        pts = VS.fromListN segs $ fmap cons angles
+        in Graphic pts maxBound
 
 renderGraphic :: Renderer -> Graphic -> IO ()
-renderGraphic ren g = do
-    setRenderDrawColor ren (g^.gColor)
-    renderDrawRect ren (g^.gRect)
+renderGraphic ren Graphic{..} = do
+    setRenderDrawColor ren _gColor
+    renderDrawLines ren _gPoints
 
 mainLoop :: Demo -> IO ()
 mainLoop d = do
@@ -148,3 +176,13 @@ delayTime :: Word32 -> Word32 -> Word32 -> Word32
 delayTime goal start end = let
     frame = end - start
     in if frame >= goal then 0 else goal - frame
+
+{-
+Rock       Density : 0.6  Restitution : 0.1
+Wood       Density : 0.3  Restitution : 0.2
+Metal      Density : 1.2  Restitution : 0.05
+BouncyBall Density : 0.3  Restitution : 0.8
+SuperBall  Density : 0.3  Restitution : 0.95
+Pillow     Density : 0.1  Restitution : 0.2
+Static     Density : 0.0  Restitution : 0.4
+-}
