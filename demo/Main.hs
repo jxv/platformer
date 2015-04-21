@@ -177,7 +177,7 @@ mainLoop d = do
     let d' = d & world %~ stepper
     renderDemo d'
     endTick <- ticks
-    print $ endTick - startTick
+    putStrLn $ "FPS: " ++ show (1000 / fromIntegral (endTick - startTick))
     delay (delayTime 16 startTick endTick)
     unless (c^.ctrlQuit) (mainLoop d')
 
