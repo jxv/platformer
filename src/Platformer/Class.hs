@@ -17,6 +17,7 @@ class ToAabb a where
 class ToShape a where
     toShape :: a -> Shape
 
+
 instance Functor Body where
     fmap f a@Body{..} = a{ _bShape = f _bShape }
 

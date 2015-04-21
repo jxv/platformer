@@ -16,54 +16,58 @@ data BodyType
     deriving (Show, Eq)
 
 data Shape
-    = ShapeRect Rect
-    | ShapeCircle Circle
+    = ShapeRect !Rect
+    | ShapeCircle !Circle
     deriving (Show, Eq)
 
 data Aabb = Aabb {
-    _aMin :: V2 Float,
-    _aMax :: V2 Float
+    _aMin :: !(V2 Float),
+    _aMax :: !(V2 Float)
 } deriving (Show, Eq)
 
 data Rect = Rect {
-    _rRadii :: V2 Float
+    _rRadii :: !(V2 Float)
 } deriving (Show, Eq)
 
 data Circle = Circle {
-    _cRadius :: Float
+    _cRadius :: !Float
 } deriving (Show, Eq)
 
 data Body a = Body {
-    _bType :: BodyType,
-    _bShape :: a,
-    _bPosition :: V2 Float,
-    _bVelocity :: V2 Float,
-    _bForce :: V2 Float,
-    _bMass :: Float,
-    _bInverseMass :: Float,
-    _bStaticFriction :: Float,
-    _bDynamicFriction :: Float,
-    _bRestitution :: Float
+    _bType :: !BodyType,
+    _bShape :: !a,
+    _bPosition :: !(V2 Float),
+    _bVelocity :: !(V2 Float),
+    _bForce :: !(V2 Float),
+    _bMass :: !Float,
+    _bInverseMass :: !Float,
+    _bStaticFriction :: !Float,
+    _bDynamicFriction :: !Float,
+    _bRestitution :: !Float
 } deriving (Show, Eq, Typeable, Generic1)
 
 data Manifold = Manifold {
-    _mfNormal :: V2 Float,
-    _mfPenetration :: Float,
-    _mfAKey :: Int, 
-    _mfBKey :: Int,
-    _mfE :: Float,
-    _mfDynamicFriction :: Float,
-    _mfStaticFriction :: Float
+    _mfNormal :: !(V2 Float),
+    _mfPenetration :: !Float,
+    _mfAKey :: !Int, 
+    _mfBKey :: !Int,
+    _mfE :: !Float,
+    _mfDynamicFriction :: !Float,
+    _mfStaticFriction :: !Float
 } deriving (Show, Eq)
 
 data World = World {
-    _wBodies :: Map Int (Body Shape),
-    _wManifolds :: [Manifold],
-    _wUnusedBodyKeys :: [Int],
-    _wDeltaTime :: Float,
-    _wGravity :: V2 Float,
-    _wIterations :: Int
-} deriving (Show, Eq)
+    _wBroadphase :: [(Int, Body Shape)] -> [[(Int, Body Shape)]],
+    _wBodies :: !(Map Int (Body Shape)),
+    _wManifolds :: ![Manifold],
+    _wUnusedBodyKeys :: ![Int],
+    _wDeltaTime :: !Float,
+    _wGravity :: !(V2 Float),
+    _wIterations :: !Int
+} deriving (Show)
+
+instance Show ([(Int, Body Shape)] -> [[(Int, Body Shape)]]) where
+    show _ = "[(Int, Body Shape)] -> [[(Int, Body Shape)]]"
 
 makeClassy ''Aabb
 makeClassy ''Rect

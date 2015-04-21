@@ -140,12 +140,15 @@ stepper
 genCollisionInfo :: World -> World
 genCollisionInfo w@World{..} = w & wManifolds .~ mfs
  where
-    list = M.toList _wBodies
-    mfs = catMaybes [
-            solveCollision aPair bPair |
-            (aPair,bodies) <- zip list (tail $ L.tails list),
-            bPair <- bodies,
-            (snd aPair)^.bInverseMass /= 0 || (snd bPair)^.bInverseMass /= 0
+    mfs = catMaybes
+        [ solveCollision apair bpair
+        | bucket <- _wBroadphase (M.toList _wBodies)
+        , (apair@(akey, a), bodies) <- zip bucket (tail (L.tails bucket))
+        , let aim = a^.bInverseMass /= 0
+        , let av = nearZero (a^.bVelocity)
+        , bpair@(bkey, b) <- bodies
+        , aim || b^.bInverseMass /= 0
+        , not $ av && nearZero (b^.bVelocity) -- Don't solve for both sleeping objects
         ]
 
 integrateForces :: World -> World
@@ -244,6 +247,7 @@ manifoldApplyImpulse a b m = let
 
 newWorld :: Int -> World
 newWorld maxBodies = World {
+    _wBroadphase = (:[]),
     _wBodies = M.empty,
     _wManifolds = [],
     _wUnusedBodyKeys = [0..maxBodies - 1],
