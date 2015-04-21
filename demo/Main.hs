@@ -99,15 +99,15 @@ mkDemo :: Renderer -> Texture -> Texture -> Texture -> Demo
 mkDemo ren cir box cann = Demo ren mkWorld def cir box cann
 
 mkWorld :: World
-mkWorld = (foldr addBody' (newWorld 2048) mkBodies) & wGravity .~ V2 0 0
+mkWorld = (foldr addBody' (newWorld 2048) mkBodies) & (wGravity .~ V2 0 0) . (wBroadphase .~ uniformGrid (V2 8 6) 10)
 
 mkBodies :: [Body Shape]
 mkBodies = cannonBall : (mkLogo (V2 10 6))
 
-cannonBallRadius = 5
+cannonBallRadius = 1.5
 
 cannonBall :: Body Shape
-cannonBall = newCircle 5 & (bPosition .~ V2 (-50) 30) . (bVelocity .~ V2 200 0) . (mass .~ 80) . (bRestitution .~ 0.05)
+cannonBall = newCircle cannonBallRadius & (bPosition .~ V2 (-50) 30) . (bVelocity .~ V2 200 0) . (mass .~ 80) . (bRestitution .~ 0.05)
 
 mkLogo :: V2 Float -> [Body Shape]
 mkLogo offset = 

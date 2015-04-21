@@ -18,9 +18,32 @@ isInside :: V2 Float -> Aabb -> Bool
 isInside (V2 x y) = isIntersect (Aabb (V2 x y) (V2 x y))
 {-# INLINE isInside #-}
 
+testBody :: Aabb -> Body Shape -> Bool
+testBody a b@Body{_bShape = ShapeRect rb} = testRect a (rb <$ b)
+testBody a b@Body{_bShape = ShapeCircle cb} = testCircle a (cb <$ b)
+
+testRect :: Aabb -> Body Rect -> Bool
+testRect a b = isIntersect a (toAabb b)
+{-# INLINE testRect #-}
+
+testCircle :: Aabb -> Body Circle -> Bool
+testCircle a b = let
+    inside = isInside (b^.bPosition) a
+    closest = clamp (a^.aMin) (a^.aMax) (b^.bPosition)
+    posDiff = b^.bPosition - (a^.aMin + a^.aMax) / 2
+    normal = posDiff - closest
+    distSq = sqlen normal
+    in inside || distSq <= (b^.cRadius) ^ 2
+{-# INLINE testCircle #-}
+
+bodyToBody :: Body Shape -> Body Shape -> Maybe (V2 Float, Float)
+bodyToBody a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeRect rb} = rectToRect (ra <$ a) (rb <$ b)
+bodyToBody a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeCircle cb} = rectToCircle (ra <$ a) (cb <$ b)
+bodyToBody a@Body{_bShape = ShapeCircle ca} b@Body{_bShape = ShapeCircle cb} = circleToCircle (ca <$ a) (cb <$ b)
+bodyToBody a b = (_1 %~ negate) <$> bodyToBody b a
+
 rectToRect :: Body Rect -> Body Rect -> Maybe (V2 Float, Float)
 rectToRect a b = let
-    n, overlap :: V2 Float
     n = b^.bPosition - a^.bPosition
     overlap = a^.rRadii + b^.rRadii - abs n
     in if not $ isIntersect (toAabb a) (toAabb b)
@@ -30,46 +53,6 @@ rectToRect a b = let
             then (if n^._x < 0 then V2 (-1) 0 else V2 1 0, overlap^._x)
             else (if n^._y < 0 then V2 0 (-1) else V2 0 1, overlap^._y)
 {-# INLINE rectToRect #-}
-
-testRectToRect :: Body Rect -> Body Rect -> Bool
-testRectToRect a b = let
-    n, overlap :: V2 Float
-    n = b^.bPosition - a^.bPosition
-    overlap = a^.rRadii + b^.rRadii - abs n
-    in isIntersect (toAabb a) (toAabb b)
-{-# INLINE testRectToRect #-}
-
-sqlen :: V2 Float -> Float
-sqlen (V2 x y) = x^2 + y^2
-{-# INLINE sqlen #-}
-
-circleToCircle :: Body Circle -> Body Circle -> Maybe (V2 Float, Float)
-circleToCircle a b = let
-    normal = b^.bPosition - a^.bPosition
-    distSqr = sqlen normal
-    dist = sqrt distSqr
-    radius = a^.cRadius + b^.cRadius
-    in if distSqr >= radius * radius
-        then Nothing
-        else Just $
-            if dist == 0
-            then (V2 1 0, a^.cRadius)
-            else (normal ^/ dist, radius - dist)
-{-# INLINE circleToCircle #-}
-
-testCircleToCircle :: Body Circle -> Body Circle -> Bool
-testCircleToCircle a b = let
-    normal = b^.bPosition - a^.bPosition
-    distSqr = sqlen normal
-    dist = sqrt distSqr
-    radius = a^.cRadius + b^.cRadius
-    in distSqr < radius * radius
-{-# INLINE testCircleToCircle #-}
-
-clamp :: (Applicative f, Ord a) => f a -> f a -> f a -> f a
-clamp low high n = max <$> low <*> (min <$> high <*> n)
---clamp (V2 lx ly) (V2 hx hy) (V2 nx ny) = V2 (min hx $ max lx nx) (min hy $ max ly ny)
-{-# INLINE clamp #-}
 
 rectToCircle :: Body Rect -> Body Circle -> Maybe (V2 Float, Float)
 rectToCircle a b = let
@@ -89,6 +72,30 @@ rectToCircle a b = let
         else rectToRect a $ Rect (pure $ b^.cRadius) <$ b
 {-# INLINE rectToCircle #-}
 
+circleToCircle :: Body Circle -> Body Circle -> Maybe (V2 Float, Float)
+circleToCircle a b = let
+    normal = b^.bPosition - a^.bPosition
+    distSq = sqlen normal
+    dist = sqrt distSq
+    radius = a^.cRadius + b^.cRadius
+    in if distSq >= radius * radius
+        then Nothing
+        else Just $
+            if dist == 0
+            then (V2 1 0, a^.cRadius)
+            else (normal ^/ dist, radius - dist)
+{-# INLINE circleToCircle #-}
+
+testBodyToBody :: Body Shape -> Body Shape -> Bool
+testBodyToBody a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeRect rb} = testRectToRect (ra <$ a) (rb <$ b)
+testBodyToBody a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeCircle cb} = testRectToCircle (ra <$ a) (cb <$ b)
+testBodyToBody a@Body{_bShape = ShapeCircle ca} b@Body{_bShape = ShapeCircle cb} = testCircleToCircle (ca <$ a) (cb <$ b)
+testBodyToBody a b = testBodyToBody b a
+
+testRectToRect :: Body Rect -> Body Rect -> Bool
+testRectToRect a b = isIntersect (toAabb a) (toAabb b)
+{-# INLINE testRectToRect #-}
+
 testRectToCircle :: Body Rect -> Body Circle -> Bool
 testRectToCircle a b = let
     outL = b^.bPosition^._x < a^.bPosition^._x - a^.rRadii^._x
@@ -103,27 +110,20 @@ testRectToCircle a b = let
         else testRectToRect a $ Rect (pure $ b^.cRadius) <$ b
 {-# INLINE testRectToCircle #-}
 
-
-bodyToBody :: Body Shape -> Body Shape -> Maybe (V2 Float, Float)
-bodyToBody a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeRect rb} = rectToRect (ra <$ a) (rb <$ b)
-bodyToBody a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeCircle cb} = rectToCircle (ra <$ a) (cb <$ b)
-bodyToBody a@Body{_bShape = ShapeCircle ca} b@Body{_bShape = ShapeCircle cb} = circleToCircle (ca <$ a) (cb <$ b)
-bodyToBody a b = (_1 %~ negate) <$> bodyToBody b a
-{-# INLINE bodyToBody #-}
-
-testBodyToBody :: Body Shape -> Body Shape -> Bool
-testBodyToBody a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeRect rb} = testRectToRect (ra <$ a) (rb <$ b)
-testBodyToBody a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeCircle cb} = testRectToCircle (ra <$ a) (cb <$ b)
-testBodyToBody a@Body{_bShape = ShapeCircle ca} b@Body{_bShape = ShapeCircle cb} = testCircleToCircle (ca <$ a) (cb <$ b)
-testBodyToBody a b = testBodyToBody b a
-{-# INLINE testBodyToBody #-}
+testCircleToCircle :: Body Circle -> Body Circle -> Bool
+testCircleToCircle a b = let
+    normal = b^.bPosition - a^.bPosition
+    distSq = sqlen normal
+    radius = a^.cRadius + b^.cRadius
+    in distSq < radius * radius
+{-# INLINE testCircleToCircle #-}
 
 solveCollision :: (Int, Body Shape) -> (Int, Body Shape) -> Maybe Manifold
 solveCollision (akey,a) (bkey,b) = do
-    (nrm, pen) <- bodyToBody a b
+    (normal, penetration) <- bodyToBody a b
     return $ Manifold {
-        _mfNormal = nrm,
-        _mfPenetration = pen,
+        _mfNormal = normal,
+        _mfPenetration = penetration,
         _mfAKey = akey,
         _mfBKey = bkey,
         _mfE = a^.bRestitution * b^.bRestitution,
@@ -318,3 +318,15 @@ SuperBall  Density : 0.3  Restitution : 0.95
 Pillow     Density : 0.1  Restitution : 0.2
 Static     Density : 0.0  Restitution : 0.4
 -}
+
+uniformGrid :: V2 Int -> Float -> [(Int, Body Shape)] -> [[(Int, Body Shape)]]
+uniformGrid (V2 w h) bucketSide bodyPairs = zipWith testFilter tests (repeat bodyPairs)
+ where
+    testFilter test = filter (test . snd)
+    tests = map testBody aabbs
+    aabbs =
+        [ Aabb topleft (topleft + pure bucketSide)
+        | y <- [0..h - 1]
+        , x <- [0..w - 1]
+        , let topleft = fmap fromIntegral (V2 x y) ^* bucketSide
+        ]
