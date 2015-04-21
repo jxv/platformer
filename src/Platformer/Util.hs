@@ -330,3 +330,23 @@ uniformGrid (V2 w h) bucketSide bodyPairs = zipWith testFilter tests (repeat bod
         , x <- [0..w - 1]
         , let topleft = fmap fromIntegral (V2 x y) ^* bucketSide
         ]
+
+uniformHash :: Float -> [(Int, Body Shape)] -> [[(Int, Body Shape)]]
+uniformHash bucketSide bodyPairs = let
+    hb :: Float
+    hb = bucketSide / 2
+    --
+    indices :: Body Shape -> [(Int,Int)]
+    indices a = let
+        (V2 x y) = a^.bPosition
+        rawIndices = [V2 x y,V2 (x+hb) y,V2 x (y+hb),V2 (x-hb) y,V2 x (y-hb)]
+        rounded = map (fmap round . (^/bucketSide)) rawIndices
+        in map (\(V2 x y) -> (x,y)) (L.nub rounded)
+    --
+    group :: (Int, Body Shape) -> [((Int,Int), (Int, Body Shape))]
+    group pair = zip (indices (snd pair)) (repeat pair)
+    --
+    groupBodies :: [((Int, Int), (Int, Body Shape))]
+    groupBodies = concat (map group bodyPairs)
+    --
+    in undefined
