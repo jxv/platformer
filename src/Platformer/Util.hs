@@ -31,6 +31,14 @@ rectToRect a b = let
             else (if n^._y < 0 then V2 0 (-1) else V2 0 1, overlap^._y)
 {-# INLINE rectToRect #-}
 
+testRectToRect :: Body Rect -> Body Rect -> Bool
+testRectToRect a b = let
+    n, overlap :: V2 Float
+    n = b^.bPosition - a^.bPosition
+    overlap = a^.rRadii + b^.rRadii - abs n
+    in isIntersect (toAabb a) (toAabb b)
+{-# INLINE testRectToRect #-}
+
 sqlen :: V2 Float -> Float
 sqlen (V2 x y) = x^2 + y^2
 {-# INLINE sqlen #-}
@@ -48,6 +56,15 @@ circleToCircle a b = let
             then (V2 1 0, a^.cRadius)
             else (normal ^/ dist, radius - dist)
 {-# INLINE circleToCircle #-}
+
+testCircleToCircle :: Body Circle -> Body Circle -> Bool
+testCircleToCircle a b = let
+    normal = b^.bPosition - a^.bPosition
+    distSqr = sqlen normal
+    dist = sqrt distSqr
+    radius = a^.cRadius + b^.cRadius
+    in distSqr < radius * radius
+{-# INLINE testCircleToCircle #-}
 
 clamp :: (Applicative f, Ord a) => f a -> f a -> f a -> f a
 clamp low high n = max <$> low <*> (min <$> high <*> n)
@@ -72,35 +89,34 @@ rectToCircle a b = let
         else rectToRect a $ Rect (pure $ b^.cRadius) <$ b
 {-# INLINE rectToCircle #-}
 
-{-
-rectToCircle :: Body Rect -> Body Circle -> Maybe (V2 Float, Float)
-rectToCircle a b = let
-    inside = (b^.bPosition) `isInside` (toAabb a)
-    n = b^.bPosition - a^.bPosition
-    closest = clamp (negate $ a^.rRadii) (a^.rRadii) n
-    closest' =
-        if nearZero (n - closest)
-        then if abs (n^._x) > abs (n^._y)
-            then closest & _x .~ (if closest^._x > 0 then (a^.rRadii^._x) else (-a^.rRadii^._x))
-            else closest & _y .~ (if closest^._y > 0 then (a^.rRadii^._y) else (-a^.rRadii^._y))
-        else closest
-    normal = n - closest'
-    d = dot normal normal
-    r = b^.cRadius
-    in if not inside && d > r ^ 2
-        then Nothing
-        else Just $ (if inside then -n else n, r + sqrt d) 
-{-# INLINE rectToCircle #-}
--}
+testRectToCircle :: Body Rect -> Body Circle -> Bool
+testRectToCircle a b = let
+    outL = b^.bPosition^._x < a^.bPosition^._x - a^.rRadii^._x
+    outR = b^.bPosition^._x > a^.bPosition^._x + a^.rRadii^._x
+    outU = b^.bPosition^._y < a^.bPosition^._y - a^.rRadii^._y
+    outD = b^.bPosition^._y > a^.bPosition^._x + a^.rRadii^._y
+    in if (outL || outR) && (outU || outD)
+        then let
+            toCorner x y = bPosition %~ (_x `x` (a^.rRadii^._x)) . (_y `y` (a^.rRadii^._y))
+            cornered = a & toCorner (if outL then (-~) else (+~)) (if outU then (-~) else (+~))
+            in testCircleToCircle (Circle 0 <$ cornered) b
+        else testRectToRect a $ Rect (pure $ b^.cRadius) <$ b
+{-# INLINE testRectToCircle #-}
+
 
 bodyToBody :: Body Shape -> Body Shape -> Maybe (V2 Float, Float)
-bodyToBody a b = b2b a b
- where
-    b2b a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeRect rb} = rectToRect (ra <$ a) (rb <$ b)
-    b2b a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeCircle cb} = rectToCircle (ra <$ a) (cb <$ b)
-    b2b a@Body{_bShape = ShapeCircle ca} b@Body{_bShape = ShapeCircle cb} = circleToCircle (ca <$ a) (cb <$ b)
-    b2b a b = (_1 %~ negate) <$> b2b b a
+bodyToBody a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeRect rb} = rectToRect (ra <$ a) (rb <$ b)
+bodyToBody a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeCircle cb} = rectToCircle (ra <$ a) (cb <$ b)
+bodyToBody a@Body{_bShape = ShapeCircle ca} b@Body{_bShape = ShapeCircle cb} = circleToCircle (ca <$ a) (cb <$ b)
+bodyToBody a b = (_1 %~ negate) <$> bodyToBody b a
 {-# INLINE bodyToBody #-}
+
+testBodyToBody :: Body Shape -> Body Shape -> Bool
+testBodyToBody a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeRect rb} = testRectToRect (ra <$ a) (rb <$ b)
+testBodyToBody a@Body{_bShape = ShapeRect ra} b@Body{_bShape = ShapeCircle cb} = testRectToCircle (ra <$ a) (cb <$ b)
+testBodyToBody a@Body{_bShape = ShapeCircle ca} b@Body{_bShape = ShapeCircle cb} = testCircleToCircle (ca <$ a) (cb <$ b)
+testBodyToBody a b = testBodyToBody b a
+{-# INLINE testBodyToBody #-}
 
 solveCollision :: (Int, Body Shape) -> (Int, Body Shape) -> Maybe Manifold
 solveCollision (akey,a) (bkey,b) = do
