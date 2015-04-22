@@ -66,8 +66,10 @@ data World = World {
     _wIterations :: !Int
 } deriving (Show)
 
-instance Show ([(Int, Body Shape)] -> [[(Int, Body Shape)]]) where
-    show _ = "[(Int, Body Shape)] -> [[(Int, Body Shape)]]"
+type Broadphase = [(Int, Body Shape)] -> [[(Int, Body Shape)]]
+
+instance Show Broadphase where
+    show _ = "Broadphase"
 
 makeClassy ''Aabb
 makeClassy ''Rect

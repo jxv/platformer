@@ -5,6 +5,8 @@ import qualified Data.List as L
 import qualified Data.QuadTree as QT
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
+import qualified Data.Set as S
+import qualified Data.Array.Repa as R
 import System.IO.Unsafe (unsafePerformIO)
 import Control.Monad.ST.Strict
 import Control.Monad.Primitive
@@ -307,25 +309,21 @@ inverseMass = interrelateInv bInverseMass bMass
 interrelateInv :: Lens' a Float -> Lens' a Float -> Lens' a Float
 interrelateInv a b = lens (^.a) (\x y -> x & (a .~ y) . (b .~ recipNoInf y))
 
+rockEsque, woodEsque, metalEsque, bouncyBallEsque, superBallEsque, pillowEsque, staticEsque :: Body Shape -> Body Shape
+rockEsque = bodyEsque 0.6 0.1
+woodEsque = bodyEsque 0.3 0.2
+metalEsque = bodyEsque 1.2 0.05
+bouncyBallEsque = bodyEsque 0.3 0.8
+superBallEsque = bodyEsque 0.3 0.95
+pillowEsque = bodyEsque 0.1 0.2
+staticEsque = bodyEsque 0 0.4
+
+bodyEsque :: Float -> Float -> Body Shape -> Body Shape
+bodyEsque d r a = a & (mass .~ massFromDensity d (a^.bShape)) . (bRestitution .~ r) 
+
 massFromDensity :: Float -> Shape -> Float
 massFromDensity density (ShapeRect r) = density * 4 * r^.rRadii^._x * r^.rRadii^._y
 massFromDensity density (ShapeCircle c) = density * pi * (c^.cRadius)^2 
-
--- Pontentially splits bodies in a world
-destroyBodiesByArea :: Aabb -> World -> (World, [Body a])
-destroyBodiesByArea = undefined
-
-{-
-Rock       Density : 0.6  Restitution : 0.1
-Wood       Density : 0.3  Restitution : 0.2
-Metal      Density : 1.2  Restitution : 0.05
-BouncyBall Density : 0.3  Restitution : 0.8
-SuperBall  Density : 0.3  Restitution : 0.95
-Pillow     Density : 0.1  Restitution : 0.2
-Static     Density : 0.0  Restitution : 0.4
--}
-
-type Broadphase = [(Int, Body Shape)] -> [[(Int, Body Shape)]]
 
 uniformGrid :: V2 Int -> Float -> Broadphase
 uniformGrid (V2 w h) bucketSide bodyPairs = zipWith testFilter tests (repeat bodyPairs)

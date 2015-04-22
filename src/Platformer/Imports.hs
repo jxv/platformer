@@ -9,7 +9,8 @@ module Platformer.Imports
     , module Data.Maybe
     , module Data.Monoid
     , Map
-    , Vector
+    , STVector
+    , Set
     ) where
 
 import Control.Lens
@@ -18,8 +19,10 @@ import Linear.Affine
 import Data.Word
 import Control.Monad
 import Control.Applicative
+import Control.Monad.ST
 import Data.Function
 import Data.Maybe
 import Data.Monoid
 import Data.Map.Strict (Map)
-import Data.Vector (Vector)
+import Data.Vector.Mutable (STVector)
+import Data.Set (Set)
