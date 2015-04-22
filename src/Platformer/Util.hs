@@ -1,7 +1,13 @@
 module Platformer.Util where
 
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import qualified Data.List as L
+import qualified Data.QuadTree as QT
+import qualified Data.Vector as V
+import qualified Data.Vector.Mutable as VM
+import System.IO.Unsafe (unsafePerformIO)
+import Control.Monad.ST.Strict
+import Control.Monad.Primitive
 import Platformer.Imports
 import Platformer.Types
 import Platformer.Class
@@ -319,7 +325,9 @@ Pillow     Density : 0.1  Restitution : 0.2
 Static     Density : 0.0  Restitution : 0.4
 -}
 
-uniformGrid :: V2 Int -> Float -> [(Int, Body Shape)] -> [[(Int, Body Shape)]]
+type Broadphase = [(Int, Body Shape)] -> [[(Int, Body Shape)]]
+
+uniformGrid :: V2 Int -> Float -> Broadphase
 uniformGrid (V2 w h) bucketSide bodyPairs = zipWith testFilter tests (repeat bodyPairs)
  where
     testFilter test = filter (test . snd)
@@ -331,22 +339,19 @@ uniformGrid (V2 w h) bucketSide bodyPairs = zipWith testFilter tests (repeat bod
         , let topleft = fmap fromIntegral (V2 x y) ^* bucketSide
         ]
 
-uniformHash :: Float -> [(Int, Body Shape)] -> [[(Int, Body Shape)]]
-uniformHash bucketSide bodyPairs = let
-    hb :: Float
-    hb = bucketSide / 2
-    --
-    indices :: Body Shape -> [(Int,Int)]
-    indices a = let
-        (V2 x y) = a^.bPosition
-        rawIndices = [V2 x y,V2 (x+hb) y,V2 x (y+hb),V2 (x-hb) y,V2 x (y-hb)]
-        rounded = map (fmap round . (^/bucketSide)) rawIndices
-        in map (\(V2 x y) -> (x,y)) (L.nub rounded)
-    --
-    group :: (Int, Body Shape) -> [((Int,Int), (Int, Body Shape))]
-    group pair = zip (indices (snd pair)) (repeat pair)
-    --
-    groupBodies :: [((Int, Int), (Int, Body Shape))]
-    groupBodies = concat (map group bodyPairs)
-    --
-    in undefined
+uniformHash :: (Int,Int) -> Float -> Broadphase
+uniformHash (w,h) bucketSide bodyPairs = let
+    len = w * h
+    inserts m = do
+        forM_ bodyPairs $ \bpair -> do
+            let loc = let
+                    (V2 x y) = (snd bpair)^.bPosition ^/ bucketSide
+                    in (round y * w + round x) `mod` len
+            hashInsert m loc bpair
+        return m
+    hashInsert m loc bpair = do
+        bucket <- VM.unsafeRead m loc
+        VM.unsafeWrite m loc (bpair : bucket)
+        return m
+    v = V.create $ inserts =<< V.thaw (V.fromListN len (repeat []))
+    in V.toList v

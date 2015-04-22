@@ -6,7 +6,7 @@
 
 module Platformer.Class where
 
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import qualified Data.List as L
 import Platformer.Imports
 import Platformer.Types
@@ -16,7 +16,6 @@ class ToAabb a where
 
 class ToShape a where
     toShape :: a -> Shape
-
 
 instance Functor Body where
     fmap f a@Body{..} = a{ _bShape = f _bShape }

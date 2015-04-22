@@ -21,5 +21,5 @@ import Control.Applicative
 import Data.Function
 import Data.Maybe
 import Data.Monoid
-import Data.Map (Map)
+import Data.Map.Strict (Map)
 import Data.Vector.Storable (Vector)
