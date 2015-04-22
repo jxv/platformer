@@ -97,12 +97,13 @@ mkDemo :: Renderer -> Texture -> Texture -> Texture -> Demo
 mkDemo ren cir box cann = Demo ren mkWorld def cir box cann
 
 mkWorld :: World
-mkWorld = (foldr addBody' (newWorld 2048) mkBodies) & (wGravity .~ V2 0 0) -- . broadphaseUniHash
+mkWorld = (foldr addBody' (newWorld 2048) mkBodies) & (wGravity .~ V2 0 0) . (wBroadphase .~ bpUniHash)
  where
-    broadphaseNone, broadphaseUniGrid, broadphaseUniHash :: World -> World
-    broadphaseNone = wBroadphase .~ (const [])
-    broadphaseUniGrid = wBroadphase .~ uniformGrid (V2 8 6) 10
-    broadphaseUniHash = wBroadphase .~ uniformHash (16, 12) 5
+    bpDef, bpNone, bpUniGrid, bpUniHash :: Broadphase
+    bpDef = (:[])
+    bpNone = const []
+    bpUniGrid = uniformGrid (V2 8 6) 10
+    bpUniHash = uniformHash (16, 12) 5
 
 mkBodies :: [Body Shape]
 mkBodies = cannonBall : (mkLogo (V2 10 6))
