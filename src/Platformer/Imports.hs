@@ -22,4 +22,4 @@ import Data.Function
 import Data.Maybe
 import Data.Monoid
 import Data.Map.Strict (Map)
-import Data.Vector.Storable (Vector)
+import Data.Vector (Vector)
