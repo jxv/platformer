@@ -11,6 +11,7 @@ module Platformer.Imports
     , Map
     , STVector
     , Set
+    , Array
     ) where
 
 import Control.Lens
@@ -26,3 +27,4 @@ import Data.Monoid
 import Data.Map.Strict (Map)
 import Data.Vector.Mutable (STVector)
 import Data.Set (Set)
+import Data.Array.Repa (Array)
