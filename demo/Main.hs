@@ -36,9 +36,7 @@ data Control = Control {
 makeClassy ''Demo
 makeClassy ''Control
 
-instance HasWorld Demo where
-    world = demoWorld
-
+instance HasWorld Demo where world = demoWorld 
 instance HasControl Demo where
     control = demoControl
 
@@ -99,11 +97,12 @@ mkDemo :: Renderer -> Texture -> Texture -> Texture -> Demo
 mkDemo ren cir box cann = Demo ren mkWorld def cir box cann
 
 mkWorld :: World
-mkWorld = (foldr addBody' (newWorld 2048) mkBodies) & (wGravity .~ V2 0 0) . broadphaseUniHash
+mkWorld = (foldr addBody' (newWorld 2048) mkBodies) & (wGravity .~ V2 0 0) -- . broadphaseUniHash
  where
-    broadphaseUniGrid, broadphaseUniHash :: World -> World
+    broadphaseNone, broadphaseUniGrid, broadphaseUniHash :: World -> World
+    broadphaseNone = wBroadphase .~ (const [])
     broadphaseUniGrid = wBroadphase .~ uniformGrid (V2 8 6) 10
-    broadphaseUniHash = wBroadphase .~ uniformHash 10 
+    broadphaseUniHash = wBroadphase .~ uniformHash (16, 12) 5
 
 mkBodies :: [Body Shape]
 mkBodies = cannonBall : (mkLogo (V2 10 6))
@@ -116,7 +115,7 @@ cannonBall = newCircle cannonBallRadius & (bPosition .~ V2 (-50) 30) . (bVelocit
 
 mkLogo :: V2 Float -> [Body Shape]
 mkLogo offset = 
-    [ shape & bPosition .~ (offset + V2 (fromIntegral x) (fromIntegral y))
+    [ shape & (bPosition .~ (offset + V2 (fromIntegral x) (fromIntegral y))) . (bDynamicFriction .~ 0.1) . (bStaticFriction .~ 0.1)
     | (y,line) <- zip [0..] logo
     , (x,ch) <- zip [0..] line
     , ch == '.'
