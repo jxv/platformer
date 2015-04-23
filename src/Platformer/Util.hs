@@ -5,7 +5,8 @@ import qualified Data.List as L
 import qualified Data.QuadTree as QT
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
-import qualified Data.Set as S
+import qualified Data.Set as Set
+import qualified Data.Sequence as Seq
 import qualified Data.Array.Repa as R
 import System.IO.Unsafe (unsafePerformIO)
 import Control.Monad.ST.Strict
@@ -151,8 +152,8 @@ integrateVelocity dt gravity b@Body{..} = let
     in if _bInverseMass == 0 then b else integrateForce dt gravity b'
 
 stepper :: World -> World
-stepper
-    = clearForces
+stepper =
+      clearForces
     . clearManifolds
     . correctPositions
     . integrateVelocities
@@ -166,7 +167,7 @@ genCollisionInfo w@World{..} = w & wManifolds .~ mfs
  where
     mfs = catMaybes
         [ solveCollision apair bpair
-        | bucket <- _wBroadphase (M.toList _wBodies)
+        | bucket <- _wBroadphase [(key, (M.!) _wBodies key) | key <- Set.toList _wUsedBodyKeys]
         , (apair@(akey, a), bodies) <- zip bucket (tail (L.tails bucket))
         , let aim = a^.bInverseMass /= 0
         , let av = nearZero (a^.bVelocity)
@@ -176,12 +177,12 @@ genCollisionInfo w@World{..} = w & wManifolds .~ mfs
         ]
 
 integrateForces :: World -> World
-integrateForces w@World{..} = w & wBodies %~ (M.map (integrateForce _wDeltaTime _wGravity))
+integrateForces w@World{..} = w & wBodies %~ (fmap (integrateForce _wDeltaTime _wGravity))
 
 initializeCollisions :: World -> World
 initializeCollisions w@World{..} = w & wManifolds %~ (map step)
  where
-    step m@Manifold{..} = manifoldInitialize _wGravity _wDeltaTime _mfAKey (_wBodies M.! _mfAKey) _mfBKey (_wBodies M.! _mfBKey) m
+    step m@Manifold{..} = manifoldInitialize _wGravity _wDeltaTime _mfAKey ((M.!) _wBodies _mfAKey) _mfBKey ((M.!) _wBodies _mfBKey) m
     manifoldInitialize g dt akey a bkey b m = let
         e = mfE .~ (a^.bRestitution * b^.bRestitution)
         sf = mfStaticFriction .~ (a^.bStaticFriction * b^.bStaticFriction)
@@ -194,19 +195,19 @@ solveCollisions w = (iterate stepper w) !! (w^.wIterations)
     stepper v = v & wBodies .~ (foldl step (v^.wBodies) (v^.wManifolds))
     step bodies m = let
         (akey,bkey) = (m^.mfAKey, m^.mfBKey)
-        (a,b) = manifoldApplyImpulse (bodies M.! akey) (bodies M.! bkey) m
-        in M.insert akey a $ M.insert bkey b $ bodies
+        (a,b) = manifoldApplyImpulse ((M.!) bodies akey) ((M.!) bodies bkey) m
+        in (M.adjust (const a) akey . M.adjust (const b) bkey) bodies
 
 integrateVelocities :: World -> World
-integrateVelocities w@World{..} = w & wBodies %~ M.map (integrateVelocity _wDeltaTime _wGravity)
+integrateVelocities w@World{..} = w & wBodies %~ fmap (integrateVelocity _wDeltaTime _wGravity)
 
 correctPositions :: World -> World
 correctPositions w = w & wBodies .~ (foldl step (w^.wBodies) (w^.wManifolds))
  where
     step bodies m = let
         (akey,bkey) = (m^.mfAKey, m^.mfBKey)
-        (a,b) = positionalCorrection (bodies M.! akey) (bodies M.! bkey) m
-        in M.insert akey a $ M.insert bkey b $ bodies
+        (a,b) = positionalCorrection ((M.!) bodies akey) ((M.!) bodies bkey) m
+        in (M.adjust (const a) akey . M.adjust (const b) bkey) bodies
     positionalCorrection a b Manifold{..} = let
         percent = 0.4 -- usually 0.2 to 0.8
         slop = 0.05 -- usually 0.01 to 0.1 (to stop jitters)
@@ -218,31 +219,32 @@ correctPositions w = w & wBodies .~ (foldl step (w^.wBodies) (w^.wManifolds))
 onDynamic :: Body Shape -> (Body Shape -> Body Shape) -> Body Shape
 onDynamic a f = (if a^.bType == Dynamic then f else id) a
 
-clearForces :: World -> World
-clearForces = wBodies %~ M.map (bForce .~ zero)
-
 clearManifolds :: World -> World
-clearManifolds = wManifolds .~ []
+clearManifolds w = w & wManifolds .~ []
+
+clearForces :: World -> World
+clearForces w = w & wBodies %~ fmap (bForce .~ zero)
 
 addBody :: Body Shape -> World -> (Int, World)
 addBody a w = let
     key = head (w^.wUnusedBodyKeys)
-    w' = w & (wBodies %~ M.insert key a) . (wUnusedBodyKeys %~ tail)
+    w' = w & (wBodies %~ M.insert key a) . (wUnusedBodyKeys %~ tail) . (wUsedBodyKeys %~ Set.insert key)
     in (key, w')
 
 addBody' :: Body Shape -> World -> World
 addBody' a w = let
     key = head (w^.wUnusedBodyKeys)
-    in w & (wBodies %~ M.insert key a) . (wUnusedBodyKeys %~ tail)
+    bodies = M.adjust (const a) key (w^.wBodies)
+    in w & (wBodies .~ bodies) . (wUnusedBodyKeys %~ tail) . (wUsedBodyKeys %~ Set.insert key)
 
 addBodyMay :: Body Shape -> World -> Maybe (Int, World)
 addBodyMay a w = do
     key <- headMay (w^.wUnusedBodyKeys)
-    let w' = w & (wBodies %~ M.insert key a) . (wUnusedBodyKeys %~ tail)
+    let w' = w & (wBodies %~ M.insert key a) . (wUnusedBodyKeys %~ tail) . (wUsedBodyKeys %~ Set.insert key)
     return (key, w')
 
 deleteBody :: Int -> World -> World
-deleteBody key = (wBodies %~ M.delete key) . (wUnusedBodyKeys %~ (key:))
+deleteBody key = (wBodies %~ M.delete key) . (wUnusedBodyKeys %~ (key:)) . (wUsedBodyKeys %~ Set.delete key)
 
 manifoldApplyImpulse :: Body Shape -> Body Shape -> Manifold -> (Body Shape, Body Shape)
 manifoldApplyImpulse a b m = let
@@ -272,13 +274,16 @@ manifoldApplyImpulse a b m = let
 newWorld :: Int -> World
 newWorld maxBodies = World {
     _wBroadphase = (:[]),
-    _wBodies = M.empty,
+    _wBodies = M.fromList $ zip [0..maxBodies - 1] (repeat nullBody),
     _wManifolds = [],
+    _wUsedBodyKeys = Set.empty,
     _wUnusedBodyKeys = [0..maxBodies - 1],
     _wGravity = V2 0 9.8,
     _wDeltaTime = 1 / 60,
     _wIterations = 10
 }
+ where
+    nullBody = newCircle 0
 
 newBody :: ToShape a => a -> Body Shape
 newBody a = Body {
@@ -323,10 +328,10 @@ bodyEsque d r a = a & (mass .~ massFromDensity d (a^.bShape)) . (bRestitution .~
 
 massFromDensity :: Float -> Shape -> Float
 massFromDensity density (ShapeRect r) = density * 4 * r^.rRadii^._x * r^.rRadii^._y
-massFromDensity density (ShapeCircle c) = density * pi * (c^.cRadius)^2 
+massFromDensity density (ShapeCircle c) = density * pi * (c^.cRadius) ^ 2 
 
 uniformGrid :: V2 Int -> Float -> Broadphase
-uniformGrid (V2 w h) bucketSide bodyPairs = zipWith testFilter tests (repeat bodyPairs)
+uniformGrid (V2 w h) bucketSide bodyPairs = zipWith testFilter tests (replicate (w*h) bodyPairs)
  where
     testFilter test = filter (test . snd)
     tests = map testBody aabbs
@@ -351,5 +356,5 @@ uniformHash (w,h) bucketSide bodyPairs = let
         bucket <- VM.unsafeRead m loc
         VM.unsafeWrite m loc (bpair : bucket)
         return m
-    v = V.create $ inserts =<< V.thaw (V.fromListN len (repeat []))
-    in V.toList v
+    v = V.fromListN len (replicate len [])
+    in V.toList $ V.create $ inserts =<< V.thaw v

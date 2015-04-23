@@ -10,6 +10,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.List as L
 import Platformer.Imports
 import Platformer.Types
+import qualified Data.Vector as V
 
 class ToAabb a where
     toAabb :: a -> Aabb

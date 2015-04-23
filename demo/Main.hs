@@ -2,7 +2,10 @@
 module Main where
 
 import qualified Data.Map as M
+import qualified Data.Vector as V
 import qualified Data.Vector.Storable as VS
+import qualified Data.Set as Set
+import qualified Data.Sequence as Seq
 import Control.Applicative
 import Control.Monad
 import Control.Lens
@@ -211,7 +214,8 @@ renderDemo :: Demo -> IO ()
 renderDemo d = do
     setRenderDrawColor ren (V4 0x00 0x00 0x00 0xff) 
     renderClear ren
-    forM_ (M.toList $ d^.wBodies) $ \(akey,a) -> do
+    forM_ (Set.toList $ d^.wUsedBodyKeys) $ \akey -> do
+        let a = (d^.wBodies) M.! akey
         let (tex, dim) = case a^.bShape of
                 ShapeRect _ -> (d^.demoBox, 10)
                 ShapeCircle a ->
@@ -228,13 +232,3 @@ delayTime :: Word32 -> Word32 -> Word32 -> Word32
 delayTime goal start end = let
     frame = end - start
     in if frame >= goal then 0 else goal - frame
-
-{-
-Rock       Density : 0.6  Restitution : 0.1
-Wood       Density : 0.3  Restitution : 0.2
-Metal      Density : 1.2  Restitution : 0.05
-BouncyBall Density : 0.3  Restitution : 0.8
-SuperBall  Density : 0.3  Restitution : 0.95
-Pillow     Density : 0.1  Restitution : 0.2
-Static     Density : 0.0  Restitution : 0.4
--}

@@ -9,6 +9,7 @@ module Platformer.Types where
 import Platformer.Imports
 import Data.Data
 import GHC.Generics (Generic1)
+import qualified Data.Vector as V
 
 data BodyType
     = Static
@@ -60,6 +61,7 @@ data World = World {
     _wBroadphase :: [(Int, Body Shape)] -> [[(Int, Body Shape)]],
     _wBodies :: !(Map Int (Body Shape)),
     _wManifolds :: ![Manifold],
+    _wUsedBodyKeys :: !(Set Int),
     _wUnusedBodyKeys :: ![Int],
     _wDeltaTime :: !Float,
     _wGravity :: !(V2 Float),
@@ -70,6 +72,9 @@ type Broadphase = [(Int, Body Shape)] -> [[(Int, Body Shape)]]
 
 instance Show Broadphase where
     show _ = "Broadphase"
+
+instance Show (MVector RealWorld (Body Shape)) where
+    show = const "Bodies"
 
 makeClassy ''Aabb
 makeClassy ''Rect

@@ -9,9 +9,12 @@ module Platformer.Imports
     , module Data.Maybe
     , module Data.Monoid
     , Map
-    , STVector
+    , Vector
+    , MVector
     , Set
     , Array
+    , RealWorld
+    , Seq
     ) where
 
 import Control.Lens
@@ -25,6 +28,9 @@ import Data.Function
 import Data.Maybe
 import Data.Monoid
 import Data.Map.Strict (Map)
-import Data.Vector.Mutable (STVector)
+import Data.Vector (Vector)
+import Data.Vector.Mutable (MVector)
+import Control.Monad.ST.Strict (RealWorld)
 import Data.Set (Set)
+import Data.Sequence (Seq)
 import Data.Array.Repa (Array)
