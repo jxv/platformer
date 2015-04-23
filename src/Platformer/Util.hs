@@ -8,6 +8,8 @@ import qualified Data.Vector.Mutable as VM
 import qualified Data.Set as Set
 import qualified Data.Sequence as Seq
 import qualified Data.Array.Repa as R
+import qualified Data.Array.IO as A
+import Data.Foldable (sequenceA_)
 import System.IO.Unsafe (unsafePerformIO)
 import Control.Monad.ST.Strict
 import Control.Monad.Primitive
@@ -151,23 +153,25 @@ integrateVelocity dt gravity b@Body{..} = let
     b' = b & bPosition +~ pos
     in if _bInverseMass == 0 then b else integrateForce dt gravity b'
 
-stepper :: World -> World
-stepper =
-      clearForces
-    . clearManifolds
-    . correctPositions
-    . integrateVelocities
-    . solveCollisions
-    . initializeCollisions
-    . integrateForces
-    . genCollisionInfo
+stepper :: World -> IO World
+stepper w
+    = genCollisionInfo w
+    >>= integrateForces
+    >>= initializeCollisions
+    >>= solveCollisions
+    >>= integrateVelocities
+    >>= correctPositions
+    >>= clearManifolds
+    >>= clearForces
 
-genCollisionInfo :: World -> World
-genCollisionInfo w@World{..} = w & wManifolds .~ mfs
+genCollisionInfo :: World -> IO World
+genCollisionInfo w@World{..} = do
+    bodies <- getUsedBodies w
+    return $ w & wManifolds .~ (mfs bodies)
  where
-    mfs = catMaybes
+    mfs usedBodies = catMaybes
         [ solveCollision apair bpair
-        | bucket <- _wBroadphase [(key, (M.!) _wBodies key) | key <- Set.toList _wUsedBodyKeys]
+        | bucket <- _wBroadphase usedBodies
         , (apair@(akey, a), bodies) <- zip bucket (tail (L.tails bucket))
         , let aim = a^.bInverseMass /= 0
         , let av = nearZero (a^.bVelocity)
@@ -176,38 +180,63 @@ genCollisionInfo w@World{..} = w & wManifolds .~ mfs
         , not $ av && nearZero (b^.bVelocity) -- Don't solve for both sleeping objects
         ]
 
-integrateForces :: World -> World
-integrateForces w@World{..} = w & wBodies %~ (fmap (integrateForce _wDeltaTime _wGravity))
+getUsedBodies :: World -> IO [(Int, Body Shape)]
+getUsedBodies w = forM (Set.toList $ w^.wUsedBodyKeys) $ \key -> do
+    a <- A.readArray (w^.wBodies) key
+    return (key, a)
 
-initializeCollisions :: World -> World
-initializeCollisions w@World{..} = w & wManifolds %~ (map step)
+integrateForces :: World -> IO World
+integrateForces w@World{..} = do
+    bodies <- A.mapArray (integrateForce _wDeltaTime _wGravity) (w^.wBodies)
+    return $ w & wBodies .~ bodies
+
+initializeCollisions :: World -> IO World
+initializeCollisions w@World{..} = do
+    mfs <- forM _wManifolds step
+    return $ w & wManifolds .~ mfs
  where
-    step m@Manifold{..} = manifoldInitialize _wGravity _wDeltaTime _mfAKey ((M.!) _wBodies _mfAKey) _mfBKey ((M.!) _wBodies _mfBKey) m
-    manifoldInitialize g dt akey a bkey b m = let
+    step :: Manifold -> IO Manifold
+    step m@Manifold{..} = do
+        a <- A.readArray _wBodies _mfAKey
+        b <- A.readArray _wBodies _mfBKey
+        return $ manifoldInitialize _wGravity _wDeltaTime a b m
+    manifoldInitialize g dt a b m = let
         e = mfE .~ (a^.bRestitution * b^.bRestitution)
         sf = mfStaticFriction .~ (a^.bStaticFriction * b^.bStaticFriction)
         df = mfDynamicFriction .~ (a^.bDynamicFriction * b^.bDynamicFriction)
         in m & e . sf . df
 
-solveCollisions :: World -> World
-solveCollisions w = (iterate stepper w) !! (w^.wIterations)
+solveCollisions :: World -> IO World
+solveCollisions w@World{..} = do
+    sequenceA_ (replicate _wIterations $ forM_ _wManifolds step)
+    return w 
  where
-    stepper v = v & wBodies .~ (foldl step (v^.wBodies) (v^.wManifolds))
-    step bodies m = let
-        (akey,bkey) = (m^.mfAKey, m^.mfBKey)
-        (a,b) = manifoldApplyImpulse ((M.!) bodies akey) ((M.!) bodies bkey) m
-        in (M.adjust (const a) akey . M.adjust (const b) bkey) bodies
+    step :: Manifold -> IO ()
+    step m@Manifold{..} = do
+        a <- A.readArray _wBodies _mfAKey
+        b <- A.readArray _wBodies _mfBKey
+        let (a',b') = manifoldApplyImpulse a b m
+        A.writeArray _wBodies _mfAKey a'
+        A.writeArray _wBodies _mfBKey b'
 
-integrateVelocities :: World -> World
-integrateVelocities w@World{..} = w & wBodies %~ fmap (integrateVelocity _wDeltaTime _wGravity)
+integrateVelocities :: World -> IO World
+integrateVelocities w@World{..} = do
+    bodies <- A.mapArray (integrateVelocity _wDeltaTime _wGravity) (w^.wBodies)
+    return $ w & wBodies .~ bodies
 
-correctPositions :: World -> World
-correctPositions w = w & wBodies .~ (foldl step (w^.wBodies) (w^.wManifolds))
+correctPositions :: World -> IO World
+correctPositions w@World{..} = do
+    forM_ _wManifolds step
+    return w
  where
-    step bodies m = let
-        (akey,bkey) = (m^.mfAKey, m^.mfBKey)
-        (a,b) = positionalCorrection ((M.!) bodies akey) ((M.!) bodies bkey) m
-        in (M.adjust (const a) akey . M.adjust (const b) bkey) bodies
+    step :: Manifold -> IO ()
+    step m@Manifold{..} = do
+        a <- A.readArray _wBodies _mfAKey
+        b <- A.readArray _wBodies _mfBKey
+        let (a',b') = positionalCorrection a b m
+        A.writeArray _wBodies _mfAKey a'
+        A.writeArray _wBodies _mfBKey b'
+    positionalCorrection :: Body Shape -> Body Shape -> Manifold -> (Body Shape, Body Shape)
     positionalCorrection a b Manifold{..} = let
         percent = 0.4 -- usually 0.2 to 0.8
         slop = 0.05 -- usually 0.01 to 0.1 (to stop jitters)
@@ -219,32 +248,40 @@ correctPositions w = w & wBodies .~ (foldl step (w^.wBodies) (w^.wManifolds))
 onDynamic :: Body Shape -> (Body Shape -> Body Shape) -> Body Shape
 onDynamic a f = (if a^.bType == Dynamic then f else id) a
 
-clearManifolds :: World -> World
-clearManifolds w = w & wManifolds .~ []
+clearManifolds :: World -> IO World
+clearManifolds w = return $ w & wManifolds .~ []
 
-clearForces :: World -> World
-clearForces w = w & wBodies %~ fmap (bForce .~ zero)
+clearForces :: World -> IO World
+clearForces w = do
+    bodies <- A.mapArray (bForce .~ zero) (w^.wBodies)
+    return $ w & wBodies .~ bodies
 
-addBody :: Body Shape -> World -> (Int, World)
-addBody a w = let
-    key = head (w^.wUnusedBodyKeys)
-    w' = w & (wBodies %~ M.insert key a) . (wUnusedBodyKeys %~ tail) . (wUsedBodyKeys %~ Set.insert key)
-    in (key, w')
-
-addBody' :: Body Shape -> World -> World
-addBody' a w = let
-    key = head (w^.wUnusedBodyKeys)
-    bodies = M.adjust (const a) key (w^.wBodies)
-    in w & (wBodies .~ bodies) . (wUnusedBodyKeys %~ tail) . (wUsedBodyKeys %~ Set.insert key)
-
-addBodyMay :: Body Shape -> World -> Maybe (Int, World)
-addBodyMay a w = do
-    key <- headMay (w^.wUnusedBodyKeys)
-    let w' = w & (wBodies %~ M.insert key a) . (wUnusedBodyKeys %~ tail) . (wUsedBodyKeys %~ Set.insert key)
+addBody :: Body Shape -> World -> IO (Int, World)
+addBody a w@World{..} = do
+    let key = head (w^.wUnusedBodyKeys)
+    A.writeArray _wBodies key a
+    let w' = w & (wUnusedBodyKeys %~ tail) . (wUsedBodyKeys %~ Set.insert key)
     return (key, w')
 
+addBody' :: Body Shape -> World -> IO World
+addBody' a w@World{..} = do
+    let key = head (w^.wUnusedBodyKeys)
+    A.writeArray _wBodies key a
+    let w' = w & (wUnusedBodyKeys %~ tail) . (wUsedBodyKeys %~ Set.insert key)
+    return w'
+
+addBodyMay :: Body Shape -> World -> IO (Maybe (Int, World))
+addBodyMay a w@World{..} = do
+    let mkey = headMay (w^.wUnusedBodyKeys)
+    case mkey of
+        Nothing -> return Nothing
+        Just key -> do
+            A.writeArray _wBodies key a
+            let w' = w & (wUnusedBodyKeys %~ tail) . (wUsedBodyKeys %~ Set.insert key)
+            return $ Just (key, w')
+
 deleteBody :: Int -> World -> World
-deleteBody key = (wBodies %~ M.delete key) . (wUnusedBodyKeys %~ (key:)) . (wUsedBodyKeys %~ Set.delete key)
+deleteBody key = (wUnusedBodyKeys %~ (key:)) . (wUsedBodyKeys %~ Set.delete key)
 
 manifoldApplyImpulse :: Body Shape -> Body Shape -> Manifold -> (Body Shape, Body Shape)
 manifoldApplyImpulse a b m = let
@@ -271,17 +308,19 @@ manifoldApplyImpulse a b m = let
         | nearZero jt -> (a',b')
         | otherwise -> (a'',b'')
 
-newWorld :: Int -> World
-newWorld maxBodies = World {
-    _wBroadphase = (:[]),
-    _wBodies = M.fromList $ zip [0..maxBodies - 1] (repeat nullBody),
-    _wManifolds = [],
-    _wUsedBodyKeys = Set.empty,
-    _wUnusedBodyKeys = [0..maxBodies - 1],
-    _wGravity = V2 0 9.8,
-    _wDeltaTime = 1 / 60,
-    _wIterations = 10
-}
+newWorld :: Int -> IO World
+newWorld maxBodies = do
+    bodies <- A.newArray (0,maxBodies - 1) nullBody
+    return $ World {
+            _wBroadphase = (:[]),
+            _wBodies = bodies,
+            _wManifolds = [],
+            _wUsedBodyKeys = Set.empty,
+            _wUnusedBodyKeys = [0..maxBodies - 1],
+            _wGravity = V2 0 9.8,
+            _wDeltaTime = 1 / 60,
+            _wIterations = 10
+        }
  where
     nullBody = newCircle 0
 

@@ -6,6 +6,8 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Storable as VS
 import qualified Data.Set as Set
 import qualified Data.Sequence as Seq
+import qualified Data.Array.IO as A
+import qualified Data.Foldable as F
 import Control.Applicative
 import Control.Monad
 import Control.Lens
@@ -17,6 +19,7 @@ import Data.Word
 import Foreign.C.Types
 import Data.Default
 import Data.Maybe
+
 import qualified Debug.Trace as D
 
 data Demo = Demo {
@@ -57,7 +60,7 @@ main = do
     cirTex <- createCircleTex ren 1
     canTex <- createCircleTex ren cannonBallRadius
     boxTex <- createBoxTex ren
-    let demo = mkDemo ren cirTex boxTex canTex
+    demo <- mkDemo ren cirTex boxTex canTex
     mainLoop demo
     destroyTexture boxTex
     destroyTexture canTex
@@ -96,11 +99,16 @@ createBoxTex ren = do
     setRenderTarget ren Nothing
     return tex
 
-mkDemo :: Renderer -> Texture -> Texture -> Texture -> Demo
-mkDemo ren cir box cann = Demo ren mkWorld def cir box cann
+mkDemo :: Renderer -> Texture -> Texture -> Texture -> IO Demo
+mkDemo ren cir box cann = do
+    w <- mkWorld
+    return $ Demo ren w def cir box cann
 
-mkWorld :: World
-mkWorld = (foldr addBody' (newWorld 2048) mkBodies) & (wGravity .~ V2 0 0) . (wBroadphase .~ bpUniHash)
+mkWorld :: IO World
+mkWorld = do
+    w <- newWorld 2048
+    w' <- F.foldrM addBody' w mkBodies 
+    return $ w' & (wGravity .~ 0) . (wBroadphase .~ bpUniHash)
  where
     bpDef, bpNone, bpUniGrid, bpUniHash :: Broadphase
     bpDef = (:[])
@@ -182,7 +190,8 @@ mainLoop d = do
     startTick <- ticks
     events <- pollEvents
     let c = readInput (fmap eventPayload events) (d^.control)
-    let d' = d & world %~ stepper
+    w <- stepper (d^.demoWorld)
+    let d' = d & demoWorld .~ w
     renderDemo d'
     endTick <- ticks
     putStrLn $ "FPS: " ++ show (1000 / fromIntegral (endTick - startTick))
@@ -215,7 +224,7 @@ renderDemo d = do
     setRenderDrawColor ren (V4 0x00 0x00 0x00 0xff) 
     renderClear ren
     forM_ (Set.toList $ d^.wUsedBodyKeys) $ \akey -> do
-        let a = (d^.wBodies) M.! akey
+        a <- A.readArray (d^.wBodies) akey
         let (tex, dim) = case a^.bShape of
                 ShapeRect _ -> (d^.demoBox, 10)
                 ShapeCircle a ->

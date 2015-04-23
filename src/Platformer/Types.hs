@@ -10,6 +10,7 @@ import Platformer.Imports
 import Data.Data
 import GHC.Generics (Generic1)
 import qualified Data.Vector as V
+import qualified Data.Array.IO as A
 
 data BodyType
     = Static
@@ -59,7 +60,7 @@ data Manifold = Manifold {
 
 data World = World {
     _wBroadphase :: [(Int, Body Shape)] -> [[(Int, Body Shape)]],
-    _wBodies :: !(Map Int (Body Shape)),
+    _wBodies :: !(A.IOArray Int (Body Shape)),
     _wManifolds :: ![Manifold],
     _wUsedBodyKeys :: !(Set Int),
     _wUnusedBodyKeys :: ![Int],
@@ -70,11 +71,14 @@ data World = World {
 
 type Broadphase = [(Int, Body Shape)] -> [[(Int, Body Shape)]]
 
+instance Show (A.IOArray Int (Body Shape)) where
+    show _ = "Bodies"
+
 instance Show Broadphase where
     show _ = "Broadphase"
 
 instance Show (MVector RealWorld (Body Shape)) where
-    show = const "Bodies"
+    show _ = "Bodies"
 
 makeClassy ''Aabb
 makeClassy ''Rect
