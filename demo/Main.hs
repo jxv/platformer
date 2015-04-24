@@ -223,6 +223,7 @@ renderDemo :: Demo -> IO ()
 renderDemo d = do
     setRenderDrawColor ren (V4 0x00 0x00 0x00 0xff) 
     renderClear ren
+    bodies <- forM (Set.toList $ d^.wUsedBodyKeys) $ A.readArray (d^.wBodies)
     forM_ (Set.toList $ d^.wUsedBodyKeys) $ \akey -> do
         a <- A.readArray (d^.wBodies) akey
         let (tex, dim) = case a^.bShape of

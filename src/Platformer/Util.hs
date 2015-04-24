@@ -154,19 +154,19 @@ integrateVelocity dt gravity b@Body{..} = let
     in if _bInverseMass == 0 then b else integrateForce dt gravity b'
 
 stepper :: World -> IO World
-stepper w
-    = genCollisionInfo w
-    >>= integrateForces
-    >>= initializeCollisions
-    >>= solveCollisions
-    >>= integrateVelocities
-    >>= correctPositions
-    >>= clearManifolds
-    >>= clearForces
+stepper w = do
+    let keys = Set.toList $ w^.wUsedBodyKeys
+    a <- genCollisionInfo w keys
+    integrateForces a keys
+    b <- initializeCollisions a
+    solveCollisions b
+    integrateVelocities b keys
+    correctPositions b
+    clearStep b
 
-genCollisionInfo :: World -> IO World
-genCollisionInfo w@World{..} = do
-    bodies <- getUsedBodies w
+genCollisionInfo :: World -> [Int] -> IO World
+genCollisionInfo w@World{..} keys = do
+    bodies <- getUsedBodies w keys
     return $ w & wManifolds .~ (mfs bodies)
  where
     mfs usedBodies = catMaybes
@@ -180,15 +180,16 @@ genCollisionInfo w@World{..} = do
         , not $ av && nearZero (b^.bVelocity) -- Don't solve for both sleeping objects
         ]
 
-getUsedBodies :: World -> IO [(Int, Body Shape)]
-getUsedBodies w = forM (Set.toList $ w^.wUsedBodyKeys) $ \key -> do
+getUsedBodies :: World -> [Int] -> IO [(Int, Body Shape)]
+getUsedBodies w keys = forM keys $ \key -> do
     a <- A.readArray (w^.wBodies) key
     return (key, a)
 
-integrateForces :: World -> IO World
-integrateForces w@World{..} = do
-    bodies <- A.mapArray (integrateForce _wDeltaTime _wGravity) (w^.wBodies)
-    return $ w & wBodies .~ bodies
+integrateForces :: World -> [Int] -> IO ()
+integrateForces w@World{..} keys = forM_ keys $ \key -> do
+    a <- A.readArray _wBodies key
+    A.writeArray _wBodies key (integrateForce _wDeltaTime _wGravity a)
+    
 
 initializeCollisions :: World -> IO World
 initializeCollisions w@World{..} = do
@@ -206,10 +207,8 @@ initializeCollisions w@World{..} = do
         df = mfDynamicFriction .~ (a^.bDynamicFriction * b^.bDynamicFriction)
         in m & e . sf . df
 
-solveCollisions :: World -> IO World
-solveCollisions w@World{..} = do
-    sequenceA_ (replicate _wIterations $ forM_ _wManifolds step)
-    return w 
+solveCollisions :: World -> IO ()
+solveCollisions w@World{..} = sequenceA_ (replicate _wIterations $ forM_ _wManifolds step)
  where
     step :: Manifold -> IO ()
     step m@Manifold{..} = do
@@ -219,15 +218,13 @@ solveCollisions w@World{..} = do
         A.writeArray _wBodies _mfAKey a'
         A.writeArray _wBodies _mfBKey b'
 
-integrateVelocities :: World -> IO World
-integrateVelocities w@World{..} = do
-    bodies <- A.mapArray (integrateVelocity _wDeltaTime _wGravity) (w^.wBodies)
-    return $ w & wBodies .~ bodies
+integrateVelocities :: World -> [Int] -> IO ()
+integrateVelocities w@World{..} keys = forM_ keys $ \key -> do
+    a <- A.readArray _wBodies key
+    A.writeArray _wBodies key (integrateVelocity _wDeltaTime _wGravity a)
 
-correctPositions :: World -> IO World
-correctPositions w@World{..} = do
-    forM_ _wManifolds step
-    return w
+correctPositions :: World -> IO ()
+correctPositions w@World{..} = forM_ _wManifolds step
  where
     step :: Manifold -> IO ()
     step m@Manifold{..} = do
@@ -248,13 +245,10 @@ correctPositions w@World{..} = do
 onDynamic :: Body Shape -> (Body Shape -> Body Shape) -> Body Shape
 onDynamic a f = (if a^.bType == Dynamic then f else id) a
 
-clearManifolds :: World -> IO World
-clearManifolds w = return $ w & wManifolds .~ []
-
-clearForces :: World -> IO World
-clearForces w = do
+clearStep :: World -> IO World
+clearStep w = do
     bodies <- A.mapArray (bForce .~ zero) (w^.wBodies)
-    return $ w & wBodies .~ bodies
+    return $ w & wManifolds .~ []
 
 addBody :: Body Shape -> World -> IO (Int, World)
 addBody a w@World{..} = do
