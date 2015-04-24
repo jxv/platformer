@@ -108,7 +108,7 @@ mkWorld :: IO World
 mkWorld = do
     w <- newWorld 2048
     w' <- F.foldrM addBody' w mkBodies 
-    return $ w' & (wGravity .~ 0) . (wBroadphase .~ bpUniHash)
+    return $ w' & (wGravity .~ 0) . (wBroadphase .~ bpUniHash) . (wIterations .~ 5) . (wDeltaTime .~ (1/30))
  where
     bpDef, bpNone, bpUniGrid, bpUniHash :: Broadphase
     bpDef = (:[])
@@ -123,7 +123,7 @@ cannonBallRadius :: Float
 cannonBallRadius = 1.5
 
 cannonBall :: Body Shape
-cannonBall = newCircle cannonBallRadius & (bPosition .~ V2 (-50) 30) . (bVelocity .~ V2 200 0) . (mass .~ 80) . (bRestitution .~ 0.05)
+cannonBall = newCircle cannonBallRadius & (bPosition .~ V2 (-50) 30) . (bVelocity .~ V2 20 0) . (mass .~ 80) . (bRestitution .~ 0.05)
 
 mkLogo :: V2 Float -> [Body Shape]
 mkLogo offset = 
@@ -195,7 +195,7 @@ mainLoop d = do
     renderDemo d'
     endTick <- ticks
     putStrLn $ "FPS: " ++ show (1000 / fromIntegral (endTick - startTick))
-    delay (delayTime 16 startTick endTick)
+    delay (delayTime 32 startTick endTick)
     unless (c^.ctrlQuit) (mainLoop d')
 
 pollEvents :: IO [Event]
